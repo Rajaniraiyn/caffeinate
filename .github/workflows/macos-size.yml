@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Build and compare
+      - name: Build and compare a size-optimized standard library
         shell: bash
         run: |
           rustup toolchain install "$TOOLCHAIN" --profile minimal --target "$TARGET" --component rust-src
@@ -34,15 +34,18 @@ jobs:
           cp "target/$TARGET/release/caffeinate" "$published/baseline"
           export RUSTFLAGS="$mac_flags -Z location-detail=none"
           cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features=
+            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size
           cp "target/$TARGET/release/caffeinate" "$published/rebuilt"
           export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
           cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features= -Z panic-immediate-abort
+            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
           cp "target/$TARGET/release/caffeinate" "$published/immediate-z"
           CARGO_PROFILE_RELEASE_OPT_LEVEL=s cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features= -Z panic-immediate-abort
+            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
           cp "target/$TARGET/release/caffeinate" "$published/immediate-s"
+          RUSTFLAGS="$RUSTFLAGS -Z fmt-debug=none" cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
+            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
+          cp "target/$TARGET/release/caffeinate" "$published/immediate-no-debug"
           system=/usr/bin/caffeinate
           if [[ "$(lipo -archs "$system")" == *" "* ]]; then
             lipo -thin "$ARCH" "$system" -output "$published/apple"
@@ -65,7 +68,7 @@ jobs:
               return result.returncode, result.stdout, result.stderr
 
           cases = [
-              (["--help"], 0), (["--not-a-flag"], 2),
+              (["--help"], 0), (["--not-a-flag"], 2), (["--timeout", "NaN"], 2), (["--wait", "0"], 2),
               (["-it1"], 0), (["-dt1"], 0), (["-ut1"], 0),
               (["-it1", "/bin/sh", "-c", "sleep 2; exit 37"], 37),
           ]
@@ -73,11 +76,11 @@ jobs:
           for args, status in cases:
               expected = run(baseline, args)
               assert expected[0] == status, (args, expected)
-              for profile in ("rebuilt", "immediate-z", "immediate-s"):
+              for profile in ("rebuilt", "immediate-z", "immediate-s", "immediate-no-debug"):
                   actual = run(root / profile, args)
                   assert actual == expected, (profile, args, actual, expected)
 
-          for profile in ("baseline", "rebuilt", "immediate-z", "immediate-s"):
+          for profile in ("baseline", "rebuilt", "immediate-z", "immediate-s", "immediate-no-debug"):
               with subprocess.Popen(["sleep", "2"]) as child:
                   start = monotonic()
                   result = run(root / profile, ["-iw", str(child.pid)])
