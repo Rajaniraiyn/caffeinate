@@ -40,6 +40,10 @@ jobs:
           rustup toolchain install 1.91.0 --profile minimal
           cargo +1.91.0 test --locked --no-default-features
 
+      - name: Check Linux desktop D-Bus calls
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- cargo +stable test --locked --lib linux_screen_saver -- --ignored
+
       - name: Check Unix commands and the native inhibitor
         if: runner.os != 'Windows'
         shell: bash

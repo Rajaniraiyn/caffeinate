@@ -64,6 +64,8 @@ fn inhibit_system(what: &str) -> Result<OwnedFd, String> {
 
 const SCREENSAVER: &str = "org.freedesktop.ScreenSaver";
 const GNOME: &str = "org.gnome.SessionManager";
+const XFCE: &str = "org.xfce.ScreenSaver";
+const MATE: &str = "org.mate.ScreenSaver";
 
 struct DisplayLock {
     connection: Connection,
@@ -76,12 +78,26 @@ impl DisplayLock {
     fn new(wake_display: bool) -> Result<Self, String> {
         let connection = Connection::new_session()
             .map_err(|error| format!("connecting to the desktop session: {error}"))?;
+        let bus =
+            connection.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", BUS_TIMEOUT);
         let mut last_error = None;
         for (name, path) in [
+            (XFCE, "/org/xfce/ScreenSaver"),
+            (MATE, "/org/mate/ScreenSaver"),
             (SCREENSAVER, "/org/freedesktop/ScreenSaver"),
             (SCREENSAVER, "/ScreenSaver"),
             (GNOME, "/org/gnome/SessionManager"),
         ] {
+            // A session can have other desktops installed. Use their private
+            // interfaces only when a service is already running.
+            if matches!(name, XFCE | MATE)
+                && !matches!(
+                    bus.method_call("org.freedesktop.DBus", "NameHasOwner", (name,)),
+                    Ok((true,))
+                )
+            {
+                continue;
+            }
             let proxy = connection.with_proxy(name, path, BUS_TIMEOUT);
             let result: Result<(u32,), _> = if name == GNOME {
                 // GNOME's idle-inhibit flag is 8. This client has no window.
@@ -91,7 +107,7 @@ impl DisplayLock {
             };
             match result {
                 Ok((cookie,)) => {
-                    if wake_display && name == SCREENSAVER {
+                    if wake_display && name != GNOME {
                         let _: Result<(), _> = proxy.method_call(name, "SimulateUserActivity", ());
                     }
                     return Ok(Self {
@@ -122,6 +138,62 @@ impl Drop for DisplayLock {
             "UnInhibit"
         };
         let _: Result<(), _> = proxy.method_call(self.name, method, (self.cookie,));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbus::channel::{MatchingReceiver, Sender};
+    use dbus::message::MatchRule;
+    use std::{sync::mpsc, thread, time::Instant};
+
+    #[test]
+    #[ignore = "requires a private D-Bus session"]
+    fn linux_screen_saver_acquires_refreshes_and_releases() {
+        for (name, path) in [
+            ("org.xfce.ScreenSaver", "/org/xfce/ScreenSaver"),
+            ("org.mate.ScreenSaver", "/org/mate/ScreenSaver"),
+        ] {
+            let (ready, started) = mpsc::channel();
+            let (record, calls) = mpsc::channel();
+            let (finished, stop) = mpsc::channel();
+            let server = thread::spawn(move || {
+                let connection = Connection::new_session().unwrap();
+                connection.request_name(name, false, false, true).unwrap();
+                let rule = MatchRule::new_method_call()
+                    .with_interface(name)
+                    .with_path(path);
+                connection.start_receive(
+                    rule,
+                    Box::new(move |message, connection| {
+                        let method = message.member().unwrap().to_string();
+                        let mut reply = message.method_return();
+                        match method.as_str() {
+                            "Inhibit" => reply = reply.append1(17u32),
+                            "UnInhibit" => assert_eq!(message.read1::<u32>().unwrap(), 17),
+                            _ => (),
+                        }
+                        connection.send(reply).unwrap();
+                        record.send(method).unwrap();
+                        true
+                    }),
+                );
+                ready.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while stop.try_recv().is_err() && Instant::now() < deadline {
+                    connection.process(Duration::from_millis(20)).unwrap();
+                }
+            });
+            started.recv_timeout(BUS_TIMEOUT).unwrap();
+            let lock = DisplayLock::new(true).unwrap();
+            drop(lock);
+            for method in ["Inhibit", "SimulateUserActivity", "UnInhibit"] {
+                assert_eq!(calls.recv_timeout(BUS_TIMEOUT).unwrap(), method);
+            }
+            finished.send(()).unwrap();
+            server.join().unwrap();
+        }
     }
 }
 

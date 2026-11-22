@@ -1,53 +1,99 @@
 # caffeinate
 
-Keep your computer awake from the command line.
+[![Latest release](https://img.shields.io/github/v/release/Rajaniraiyn/caffinate)](https://github.com/Rajaniraiyn/caffinate/releases/latest)
+[![Build status](https://github.com/Rajaniraiyn/caffinate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/Rajaniraiyn/caffinate/actions/workflows/check.yml?query=branch%3Amain)
+[![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20or%20Apache--2.0-blue.svg)](#license)
+
+Keep SSH sessions, downloads, and long builds running while you're away.
+Run `caffeinate -i` to prevent idle sleep and let the display turn off.
+Press Ctrl+C when you're done.
+
+[Download caffeinate](#install) · [Run with mise](#mise)
+
+## Use
+
+```sh
+caffeinate -i                  # Keep the computer awake for SSH
+caffeinate -d -t 300           # Keep the display on for five minutes
+caffeinate -i -- make          # Stay awake until make exits
+caffeinate -i -w 1234          # Stay awake until process 1234 exits
+```
+
+| Option | What it does |
+| --- | --- |
+| `-i`, `--idle` | Prevent idle sleep. This is the default when you request no other power option. |
+| `-d`, `--display` | Keep the display on. |
+| `-s`, `--system` | Request system sleep inhibition. |
+| `-u`, `--user-active` | Signal user activity for five seconds or the time set by `-t`. |
+| `-m`, `--disk` | Prevent disk idle sleep on macOS. |
+| `-t`, `--timeout SECONDS` | Release the request after this many seconds. Zero means no timeout. |
+| `-w`, `--wait PID` | Release the request when a process exits. |
+| `-h`, `--help` | Show usage. |
+
+A wrapped command takes precedence over `-w`. If a timeout expires first,
+the command keeps running and caffeinate still returns its exit status.
+
+## Platform support
+
+✓ Supported · △ Depends on power, session services, or kernel version · — Unavailable
+
+| Feature | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Idle sleep `-i` | ✓ | ✓ | △ logind or elogind |
+| Display `-d` | ✓ | ✓ | △ Desktop session service |
+| System sleep `-s` | △ On AC power | △ On AC power | △ logind or elogind, including its idle action |
+| User activity `-u` | ✓ | ✓ | △ Desktop session service |
+| Disk idle `-m` | — | ✓ | — |
+| Timeout `-t` | ✓ | ✓ | ✓ |
+| Watch a PID `-w` | ✓ | ✓ | △ Kernel 5.3+ |
+| Wrap a command | ✓ | ✓ | ✓ Kernel 5.3+ with `-t` or `-u` |
+
+On Linux, display behavior depends on the service in your desktop session.
+
+| Linux session service | Keep display on `-d` | Signal activity `-u` |
+| --- | --- | --- |
+| Xfce or MATE screensaver | ✓ | ✓ |
+| Freedesktop ScreenSaver, as used by KDE Plasma and compatible desktops | ✓ | △ If the service implements `SimulateUserActivity` |
+| GNOME Session Manager | ✓ | △ Holds the idle inhibitor without waking the display |
+| Headless or bare window manager without a session service | — | — |
 
 ## Install
 
-Run once with mise, or add it to your global mise config.
+| Download | x64 | Arm64 |
+| --- | --- | --- |
+| Windows installer | [MSI][win-x64-msi] | [MSI][win-arm64-msi] |
+| Windows portable | [ZIP][win-x64-zip] | [ZIP][win-arm64-zip] |
+| macOS | [Archive][mac-x64] | [Archive][mac-arm64] |
+| Debian and Ubuntu | [DEB][deb-x64] | [DEB][deb-arm64] |
+| Fedora and other RPM-based distributions | [RPM][rpm-x64] | [RPM][rpm-arm64] |
+| Linux static, including Alpine | [musl][musl-x64] | [musl][musl-arm64] |
+| Linux with glibc 2.35+ and libdbus | [glibc][glibc-x64] | [glibc][glibc-arm64] |
+
+The MSI adds caffeinate to your user PATH. Open a new terminal after
+installation. Install a downloaded Linux package with
+`sudo apt install ./caffeinate-linux-*.deb` or
+`sudo dnf install ./caffeinate-linux-*.rpm`.
+On macOS, run `./caffeinate` from the extracted archive to select this build.
+
+[Release notes and checksums](https://github.com/Rajaniraiyn/caffinate/releases/latest)
+
+### mise
 
 ```sh
 mise x github:Rajaniraiyn/caffinate -- caffeinate -i
 mise use -g github:Rajaniraiyn/caffinate
 ```
 
-For a manual install, choose an x64 or Arm64 file from [GitHub Releases](https://github.com/Rajaniraiyn/caffinate/releases).
+### Cargo
 
-- Windows. Open the MSI, then open a new terminal to pick up the PATH entry.
-  The ZIP contains the standalone executable.
-- Linux. Install the DEB with `sudo apt install ./caffeinate_*.deb` or the
-  RPM with `sudo dnf install ./caffeinate-*.rpm`. Use the static musl archive
-  on Alpine or older distributions. The glibc archive requires glibc 2.35
-  and libdbus.
-- macOS. Extract the archive and run `./caffeinate` to use this build
-  explicitly. macOS also ships its own `caffeinate`.
-
-To build from source, use Rust 1.91 or newer. Windows needs the MSVC build tools. Linux needs `pkg-config` and libdbus headers on glibc, or a C compiler on musl.
+Build with stable Rust 1.91 or newer. Windows requires the MSVC build tools.
+Linux requires `pkg-config` and libdbus headers for glibc, or a C compiler for musl.
 
 ```sh
 cargo install --locked --git https://github.com/Rajaniraiyn/caffinate
 ```
 
-## Use
-
-```sh
-caffeinate -i                 # allow the display to turn off
-caffeinate -d -t 60           # keep the display on for a minute
-caffeinate -i make            # keep awake while a command runs
-caffeinate -i -w 1234         # keep awake until a process exits
-```
-
-Press Ctrl+C to end a request. Run `caffeinate --help` for all options.
-
-On Windows and macOS, `-s` applies on AC power. On Linux, sleep inhibition
-needs logind or elogind, and display inhibition needs a compatible desktop
-session service. Linux has no disk-idle request. Watching a PID or wrapping
-a command with a timeout or `-u` requires Linux 5.3 or newer.
-
 ## Rust library
-
-The library and source builds use stable Rust. Add the dependency with CLI
-features disabled.
 
 ```toml
 [dependencies]
@@ -56,10 +102,25 @@ caffeinate = { git = "https://github.com/Rajaniraiyn/caffinate", default-feature
 
 ```rust
 let awake = caffeinate::Request::default().acquire()?;
-// Hold the guard while your work runs.
+// Do work while the request is active.
 drop(awake);
 ```
 
 ## License
 
 [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+
+[win-x64-msi]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-x64.msi
+[win-arm64-msi]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-arm64.msi
+[win-x64-zip]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-x64.zip
+[win-arm64-zip]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-arm64.zip
+[mac-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-macos-x64.tar.gz
+[mac-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-macos-arm64.tar.gz
+[deb-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64.deb
+[deb-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64.deb
+[rpm-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64.rpm
+[rpm-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64.rpm
+[musl-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64-musl.tar.gz
+[musl-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64-musl.tar.gz
+[glibc-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64-glibc.tar.gz
+[glibc-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64-glibc.tar.gz

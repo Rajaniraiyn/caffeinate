@@ -76,6 +76,8 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       TARGET: ${{ matrix.target }}
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C control-flow-guard -C link-arg=/CETCOMPAT
+      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: -C control-flow-guard
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -94,7 +96,12 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
+          case "$PLATFORM" in
+            linux) export RUSTFLAGS='-Z stack-protector=strong' ;;
+            macos) export RUSTFLAGS='-Z stack-protector=strong -C link-arg=-Wl,-dead_strip_dylibs' ;;
+          esac
           cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
+          unset RUSTFLAGS CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS
           if [[ "$PLATFORM-$ARCH" != windows-arm64 ]]; then
             cargo +stable test --locked --target "$TARGET"
             "./target/$TARGET/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}" --help
@@ -103,12 +110,14 @@ jobs:
         if: matrix.musl
         run: |
           docker run --rm -v "$PWD:/src" -w /src -e TARGET \
-            -e RELEASE_TOOLCHAIN -e CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
-            -e RUSTFLAGS='-C target-feature=+crt-static' rust:1-alpine3.21 sh -ec '
+            -e RELEASE_TOOLCHAIN -e CFLAGS=-fstack-protector-strong \
+            -e CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
+            rust:1-alpine3.21 sh -ec '
               apk add --no-cache build-base
               rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
-              cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
-              cargo test --locked --target "$TARGET"
+              RUSTFLAGS="-C target-feature=+crt-static -Z stack-protector=strong" \
+                cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
+              RUSTFLAGS="-C target-feature=+crt-static" cargo test --locked --target "$TARGET"
               release="target/$TARGET/release"
               "$release/caffeinate" --help
               for dbus in "$CARGO_HOME"/registry/src/*/libdbus-sys-*/vendor/dbus; do
@@ -125,7 +134,7 @@ jobs:
       - name: Package binary
         run: |
           mkdir -p dist
-          name="caffeinate-$TAG-$PLATFORM-$ARCH"
+          name="caffeinate-$PLATFORM-$ARCH"
           release="$PWD/target/$TARGET/release"
           case "$PLATFORM" in
             windows)
@@ -148,6 +157,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends rpm
           binary="$PWD/target/$TARGET/release/caffeinate"
           bash .github/packaging/linux.sh "$binary" "${TAG#v}" "$(dirname "$binary")/LICENSE-dbus.txt" "$PWD/dist"
+          mv dist/*.deb "dist/caffeinate-linux-$ARCH.deb"
+          mv dist/*.rpm "dist/caffeinate-linux-$ARCH.rpm"
 
           deb="$RUNNER_TEMP/deb"
           rpm="$RUNNER_TEMP/rpm"
@@ -174,7 +185,7 @@ jobs:
           $binary = "target/$env:TARGET/release/caffeinate.exe"
           & "$wix/wix.exe" build .github/packaging/caffeinate.wxs -arch $env:ARCH `
             -d "Version=$version" -d "Binary=$binary" -bindpath . -pdbtype none `
-            -o "dist/caffeinate-$env:TAG-windows-$env:ARCH.msi"
+            -o "dist/caffeinate-windows-$env:ARCH.msi"
       - name: Check Windows install and uninstall
         if: runner.os == 'Windows' && matrix.arch == 'x64'
         shell: pwsh
