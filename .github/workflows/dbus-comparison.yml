@@ -1,0 +1,111 @@
+name: D-Bus comparison
+on:
+  push:
+    branches: [dbus-comparison]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config dbus
+          mkdir -p "$RUNNER_TEMP/probe/src"
+          cd "$RUNNER_TEMP/probe"
+          cat > Cargo.toml <<'EOF'
+          [package]
+          name = "bus-probe"
+          version = "0.0.0"
+          edition = "2024"
+          rust-version = "1.91"
+          [dependencies]
+          dbus = { version = "=0.9.12", optional = true, default-features = false, features = ["stdfd"] }
+          zbus = { version = "=6.5.0", optional = true, default-features = false, features = ["default-rt"] }
+          [features]
+          libdbus = ["dep:dbus"]
+          bundled = ["libdbus", "dbus/vendored"]
+          native = ["dep:zbus"]
+          [profile.release]
+          opt-level = "z"
+          lto = true
+          codegen-units = 1
+          panic = "abort"
+          strip = "symbols"
+          EOF
+          cat > src/main.rs <<'EOF'
+          const DEST: &str = "org.freedesktop.DBus";
+          const PATH: &str = "/org/freedesktop/DBus";
+
+          fn main() -> Result<(), Box<dyn std::error::Error>> {
+              let mode = std::env::args().nth(1);
+              let rounds = if mode.as_deref() == Some("calls") { 32 } else { 1 };
+              #[cfg(feature = "libdbus")]
+              let connection = {
+                  let connection = dbus::blocking::Connection::new_session()?;
+                  let proxy = connection.with_proxy(DEST, PATH, std::time::Duration::from_secs(2));
+                  for _ in 0..rounds {
+                      let (id,): (String,) = proxy.method_call(DEST, "GetId", ())?;
+                      assert!(!id.is_empty());
+                  }
+                  connection
+              };
+              #[cfg(feature = "native")]
+              let connection = zbus::block_on(async {
+                  let connection = zbus::Connection::session().await?;
+                  for _ in 0..rounds {
+                      let reply = connection.call_method(Some(DEST), PATH, Some(DEST), "GetId", &()).await?;
+                      let id: String = reply.body().deserialize()?;
+                      assert!(!id.is_empty());
+                  }
+                  Ok::<_, zbus::Error>(connection)
+              })?;
+              if mode.as_deref() == Some("hold") {
+                  println!("ready");
+                  std::thread::sleep(std::time::Duration::from_millis(500));
+              }
+              drop(connection);
+              Ok(())
+          }
+          EOF
+          rustup toolchain install stable --profile minimal
+          export CARGO_TARGET_DIR="$PWD/target"
+          for backend in libdbus bundled native; do
+            cargo +stable build --release --no-default-features --features "$backend"
+            cp target/release/bus-probe "$backend"
+            echo "$backend size: $(wc -c < "$backend") bytes"
+            printf '%s normal crates including the probe: ' "$backend"
+            cargo +stable tree --no-default-features --features "$backend" -e normal --prefix none | sort -u | wc -l
+          done
+          dbus-run-session -- python3 - <<'PY'
+          import statistics
+          import subprocess
+          import time
+          from pathlib import Path
+
+          backends = ("./libdbus", "./bundled", "./native")
+          for mode in ("once", "calls"):
+              samples = {p: [] for p in backends}
+              for i in range(31):
+                  for p in backends[i % len(backends):] + backends[:i % len(backends)]:
+                      start = time.perf_counter_ns()
+                      subprocess.run([p, mode], check=True, timeout=3)
+                      if i:
+                          samples[p].append((time.perf_counter_ns() - start) / 1e6)
+              for p in backends:
+                  print(p, mode, "median ms", round(statistics.median(samples[p]), 3))
+          for p in backends:
+              rss, threads = [], []
+              for _ in range(7):
+                  with subprocess.Popen([p, "hold"], stdout=subprocess.PIPE, text=True) as proc:
+                      assert proc.stdout.readline().strip() == "ready"
+                      fields = dict(line.split(":", 1) for line in Path(f"/proc/{proc.pid}/status").read_text().splitlines())
+                      rss.append(int(fields["VmRSS"].split()[0]))
+                      threads.append(int(fields["Threads"]))
+                      assert proc.wait(timeout=3) == 0
+              print(p, "held RSS KiB", statistics.median(rss), "threads", statistics.median(threads))
+          PY
