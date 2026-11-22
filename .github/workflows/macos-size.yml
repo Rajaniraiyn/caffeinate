@@ -1,4 +1,4 @@
-name: macOS size comparison
+name: Release size comparison
 on:
   push:
     branches: [macos-size-check]
@@ -10,81 +10,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {runner: macos-15-intel, target: x86_64-apple-darwin, arch: x86_64}
-          - {runner: macos-15, target: aarch64-apple-darwin, arch: arm64}
+          - {runner: macos-15-intel, target: x86_64-apple-darwin, platform: macos, arch: x86_64}
+          - {runner: macos-15, target: aarch64-apple-darwin, platform: macos, arch: arm64e}
+          - {runner: windows-2025, target: x86_64-pc-windows-msvc, platform: windows}
+          - {runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu, platform: glibc}
+          - {runner: ubuntu-24.04, target: x86_64-unknown-linux-musl, platform: musl}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
       TOOLCHAIN: nightly-2026-11-20
       TARGET: ${{ matrix.target }}
-      ARCH: ${{ matrix.arch }}
+      PLATFORM: ${{ matrix.platform }}
+      APPLE_ARCH: ${{ matrix.arch }}
+      PYTHON: ${{ matrix.platform == 'windows' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Build and compare a size-optimized standard library
+      - name: Install libdbus headers
+        if: matrix.platform == 'glibc'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Build candidates
         shell: bash
         run: |
-          rustup toolchain install "$TOOLCHAIN" --profile minimal --target "$TARGET" --component rust-src
-          mkdir -p "$RUNNER_TEMP/binaries"
-          published="$RUNNER_TEMP/binaries"
-          mac_flags='-Z stack-protector=strong -C link-arg=-Wl,-dead_strip_dylibs'
-          export RUSTFLAGS="$mac_flags"
-          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
-          cp "target/$TARGET/release/caffeinate" "$published/baseline"
-          export RUSTFLAGS="$mac_flags -Z location-detail=none"
-          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size
-          cp "target/$TARGET/release/caffeinate" "$published/rebuilt"
-          export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
-          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
-          cp "target/$TARGET/release/caffeinate" "$published/immediate-z"
-          CARGO_PROFILE_RELEASE_OPT_LEVEL=s cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
-          cp "target/$TARGET/release/caffeinate" "$published/immediate-s"
-          RUSTFLAGS="$RUSTFLAGS -Z fmt-debug=none" cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
-            -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size -Z panic-immediate-abort
-          cp "target/$TARGET/release/caffeinate" "$published/immediate-no-debug"
-          system=/usr/bin/caffeinate
-          if [[ "$(lipo -archs "$system")" == *" "* ]]; then
-            lipo -thin "$ARCH" "$system" -output "$published/apple"
+          if [[ "$PLATFORM" == musl ]]; then
+            docker run --rm -v "$PWD:/src" -w /src -e PLATFORM -e TARGET -e TOOLCHAIN \
+              -e CFLAGS=-fstack-protector-strong rust:1-alpine3.21 sh -ec '
+                apk add --no-cache bash build-base
+                bash .github/scripts/size-probe.sh
+              '
           else
-            cp "$system" "$published/apple"
+            bash .github/scripts/size-probe.sh
           fi
-          for binary in "$published"/*; do
-            printf '%s bytes=%s gzip=%s\n' "${binary##*/}" "$(stat -f '%z' "$binary")" "$(gzip -n -c "$binary" | wc -c | tr -d ' ')"
-            otool -l "$binary" | awk '/cmd LC_BUILD_VERSION/{n=5} n{print; n--}'
-          done
-          python3 - "$published" <<'PY'
-          from pathlib import Path
-          import subprocess
-          from sys import argv
-          from time import monotonic
-
-          root = Path(argv[1])
-          def run(path, args):
-              result = subprocess.run([str(path), *args], capture_output=True, timeout=10)
-              return result.returncode, result.stdout, result.stderr
-
-          cases = [
-              (["--help"], 0), (["--not-a-flag"], 2), (["--timeout", "NaN"], 2), (["--wait", "0"], 2),
-              (["-it1"], 0), (["-dt1"], 0), (["-ut1"], 0),
-              (["-it1", "/bin/sh", "-c", "sleep 2; exit 37"], 37),
-          ]
-          baseline = root / "baseline"
-          for args, status in cases:
-              expected = run(baseline, args)
-              assert expected[0] == status, (args, expected)
-              for profile in ("rebuilt", "immediate-z", "immediate-s", "immediate-no-debug"):
-                  actual = run(root / profile, args)
-                  assert actual == expected, (profile, args, actual, expected)
-
-          for profile in ("baseline", "rebuilt", "immediate-z", "immediate-s", "immediate-no-debug"):
-              with subprocess.Popen(["sleep", "2"]) as child:
-                  start = monotonic()
-                  result = run(root / profile, ["-iw", str(child.pid)])
-                  elapsed = monotonic() - start
-                  assert result[0] == 0 and 1.5 <= elapsed <= 6, (profile, result, elapsed)
-          print("All variants passed help, errors, assertions, command exit, and PID wait")
-          PY
+      - name: Compare size and behavior
+        shell: bash
+        run: |
+          "$PYTHON" .github/scripts/size-probe.py
