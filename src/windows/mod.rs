@@ -1,5 +1,7 @@
 use crate::cli::Options;
-use crate::power::{PowerRequests, PowerSource, reset_display_timer};
+mod power;
+
+use self::power::{PowerRequests, PowerSource, reset_display_timer};
 use std::ffi::OsString;
 use std::io;
 use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};

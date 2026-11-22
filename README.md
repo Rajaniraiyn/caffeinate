@@ -4,7 +4,7 @@ Keep your PC awake from the command line.
 
 ## Install
 
-Run it once with mise. Ctrl+C ends the request.
+Run the Windows release once with mise. Ctrl+C ends the request.
 
 ```powershell
 mise x github:Rajaniraiyn/caffinate@0.1.1 -- caffeinate -disu
@@ -14,11 +14,19 @@ Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate
 Use `mise install github:Rajaniraiyn/caffinate@0.1.1` to download the release
 without changing that config.
 
-Cargo builds from the tagged source and needs Rust 1.91 or newer and the MSVC
-build tools.
+Cargo builds the tagged source. On Windows, it needs Rust 1.91 or newer and
+the MSVC build tools.
 
 ```powershell
 cargo install --locked --git https://github.com/Rajaniraiyn/caffinate --tag v0.1.1
+```
+
+Build the macOS or Linux port from this checkout with Rust 1.91 or newer.
+Linux also needs `pkg-config` and libdbus headers, such as `libdbus-1-dev` on
+Debian or Ubuntu.
+
+```sh
+cargo install --path . --locked
 ```
 
 ## Use
@@ -29,13 +37,30 @@ caffeinate /display /wait $PID
 caffeinate /idle cmd.exe /d /c 'echo Awake'
 ```
 
+On any supported platform, use short options or `--help`.
+
+```sh
+caffeinate -it 60
+caffeinate -i make
+```
+
 The default keeps the system from idling to sleep. A command takes precedence
 over `/wait` and keeps its exit code. A timeout releases the request while the
 command can continue running.
 
-Run `caffeinate /?` for the full switch list. Use `--` before a command name
-that looks like a switch. System power policy controls when requests take
-effect. [Power request behavior](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powersetrequest)
+Use `--` before a command name that looks like a switch. System power policy
+controls when requests take effect.
+
+On macOS, IOKit supplies the idle, display, system, disk and user-activity
+assertions. The wrapped command runs as a child process.
+[Apple's reference implementation](https://github.com/apple-oss-distributions/PowerManagement/blob/main/caffeinate/caffeinate.c)
+
+On Linux, `-i` blocks logind or elogind suspend, and `-s` also blocks its idle
+action. Display options need a compatible ScreenSaver or GNOME session
+service. A bare window manager may provide neither. Linux has no portable
+disk-idle request. Watching an existing PID with `-w` uses pidfds, available
+from Linux 5.3.
+[logind inhibitors](https://systemd.io/INHIBITOR_LOCKS/) · [Desktop idle inhibition](https://specifications.freedesktop.org/idle-inhibit/0.1/)
 
 ## Release
 

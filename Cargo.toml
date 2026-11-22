@@ -9,6 +9,19 @@ repository = "https://github.com/Rajaniraiyn/caffinate"
 [dependencies]
 usage-rs = { version = "7.4", default-features = false, features = ["help", "diagnostics"] }
 
+[target.'cfg(unix)'.dependencies]
+signal-hook = { version = "0.4", default-features = false }
+wait-timeout = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nix = { version = "0.32", default-features = false, features = ["event"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["alloc", "CFString"] }
+objc2-io-kit = { version = "0.3", default-features = false, features = ["pwr_mgt"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = { version = "0.9", default-features = false, features = ["stdfd"] }
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "process"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", default-features = false, features = [
     "Win32_Foundation",

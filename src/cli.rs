@@ -1,5 +1,8 @@
+#[cfg(windows)]
 use std::borrow::Cow;
-use std::ffi::{OsStr, OsString};
+#[cfg(windows)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::time::Duration;
 use usage_rs::embedded::{Exit, Outcome};
@@ -7,12 +10,8 @@ use usage_rs::{Args, Cli, Error, Event, Parser};
 
 /// Prevent idle sleep while a command runs or until a timeout.
 #[derive(Cli, Debug)]
-#[usage(
-    bin = "caffeinate",
-    unknown_flags = "error",
-    disable_help_subcommand,
-    after_help = "Slash switches are case-insensitive."
-)]
+#[usage(bin = "caffeinate", unknown_flags = "error", disable_help_subcommand)]
+#[cfg_attr(windows, usage(after_help = "Slash switches are case-insensitive."))]
 struct Invocation {
     #[usage(flatten)]
     options: Options,
@@ -36,7 +35,7 @@ pub struct Options {
     #[usage(short, long)]
     pub idle: bool,
 
-    /// Prevent idle sleep on AC power.
+    /// Request system sleep inhibition.
     #[usage(short, long)]
     pub system: bool,
 
@@ -52,7 +51,7 @@ pub struct Options {
     #[usage(short, long, value_name = "PID")]
     pub wait: Option<NonZeroU32>,
 
-    /// Disk idle requests are unavailable.
+    /// Prevent disk idle sleep where supported.
     #[usage(short = 'm', long)]
     pub disk: bool,
 }
@@ -70,15 +69,19 @@ impl Options {
 }
 
 pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
+    #[cfg(windows)]
     let normalized: Vec<_> = args.iter().map(|arg| slash_switch(arg)).collect();
+    #[cfg(windows)]
     let words: Vec<_> = normalized.iter().map(Cow::as_ref).collect();
+    #[cfg(not(windows))]
+    let words: Vec<_> = args.iter().map(OsString::as_os_str).collect();
     let mut parser = Parser::new(Invocation::command(), &words);
     let mut count = 0;
     while let Some(Ok(event)) = parser.next_event() {
         count += usize::from(matches!(event, Event::Arg { .. }));
     }
     // Parse only the options. The declared trailing arguments locate the original
-    // command without converting or copying its Windows argv.
+    // command without converting or copying its arguments.
     let command_start = args.len() - count;
     let options = &words[..command_start];
     match Invocation::parse_from(options) {
@@ -96,6 +99,7 @@ pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
     }
 }
 
+#[cfg(windows)]
 fn slash_switch(arg: &OsStr) -> Cow<'_, OsStr> {
     if !arg.as_encoded_bytes().starts_with(b"/") {
         return Cow::Borrowed(arg);
@@ -116,11 +120,9 @@ fn slash_switch(arg: &OsStr) -> Cow<'_, OsStr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::windows::ffi::OsStringExt;
-
     #[test]
-    fn accepts_slash_switches_and_short_bundles() {
-        let args = ["-disu", "/WAIT", "32", "-t2", "--timeout=16", "/m"].map(OsString::from);
+    fn accepts_short_bundles_and_long_flags() {
+        let args = ["-disum", "--wait", "32", "-t2", "--timeout=16"].map(OsString::from);
         let (options, command) = parse(&args).parsed().unwrap();
         assert!(
             options.display
@@ -137,10 +139,19 @@ mod tests {
 
     #[test]
     fn keeps_the_original_command_arguments() {
-        let mut args = ["/d", "--", "/tool.exe", "/TIMEOUT", "--", "", "café", "-h"]
+        let mut args = ["-d", "--", "/tool", "/TIMEOUT", "--", "", "café", "-h"]
             .map(OsString::from)
             .to_vec();
-        args.push(OsString::from_wide(&[0xd800]));
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            args.push(OsString::from_wide(&[0xd800]));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            args.push(OsString::from_vec(vec![0xff]));
+        }
         let (options, command) = parse(&args).parsed().unwrap();
         assert!(options.display);
         assert_eq!(command, &args[2..]);
@@ -149,9 +160,29 @@ mod tests {
         assert_eq!(parse(&args).parsed().unwrap().1, &args);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn accepts_absolute_command_paths() {
+        let args = ["/bin/sh", "-c", "exit 7"].map(OsString::from);
+        assert_eq!(parse(&args).parsed().unwrap().1, &args);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn accepts_slash_switches() {
+        let args = ["/DISPLAY", "/T", "2", "/WAIT", "32"].map(OsString::from);
+        let (options, _) = parse(&args).parsed().unwrap();
+        assert!(options.display);
+        assert_eq!(options.timeout(), Some(Duration::from_secs(2)));
+        assert_eq!(options.wait.map(NonZeroU32::get), Some(32));
+    }
+
     #[test]
     fn uses_generated_help_and_diagnostics() {
-        for help in ["/?", "/HELP", "--help", "-h"] {
+        let help = ["--help", "-h"];
+        #[cfg(windows)]
+        let help = ["/?", "/HELP", help[0], help[1]];
+        for help in help {
             let args = [help.into()];
             let outcome = parse(&args);
             let exit = outcome.exit().unwrap();
@@ -159,10 +190,10 @@ mod tests {
             assert!(!exit.stderr && exit.text.contains("--timeout"));
         }
         for (switch, value) in [
-            ("/wait", "0"),
-            ("/wait", "4294967296"),
+            ("--wait", "0"),
+            ("--wait", "4294967296"),
             ("-w", "-1"),
-            ("/timeout", "bad"),
+            ("--timeout", "bad"),
             ("-t", "-1"),
             ("-t", "7seconds"),
             ("-t", "0x10"),
