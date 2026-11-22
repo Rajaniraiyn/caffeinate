@@ -8,6 +8,7 @@ mod platform;
 #[cfg(windows)]
 #[path = "windows/mod.rs"]
 mod platform;
+mod runtime;
 
 fn main() {
     use std::io::{self, Write};
@@ -15,7 +16,7 @@ fn main() {
 
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let status = match cli::parse(&args) {
-        Outcome::Parsed((options, command)) => platform::run(&options, command),
+        Outcome::Parsed((options, command)) => runtime::run(&options, command),
         Outcome::Exit(exit) => {
             let text = exit.text.as_bytes();
             let _ = if exit.stderr {

@@ -1,27 +1,15 @@
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "macos")]
-mod macos;
+#[cfg_attr(target_os = "linux", path = "linux.rs")]
+#[cfg_attr(target_os = "macos", path = "macos.rs")]
+mod backend;
 
-use crate::cli::Options;
-#[cfg(target_os = "linux")]
-use linux::{Power, Process};
-#[cfg(target_os = "macos")]
-use macos::{Power, Process};
+use crate::{cli::Options, runtime::Target};
+pub(crate) use backend::{Power, Process};
 use rustix::process::Pid;
 use signal_hook::{
-    SigId,
     consts::{SIGINT, SIGQUIT},
-    flag, low_level,
+    flag,
 };
-use std::ffi::OsString;
-use std::io;
-use std::os::unix::process::ExitStatusExt;
-use std::path::Path;
-use std::process::Command;
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{io, sync::Arc, thread, time::Duration};
 use wait_timeout::ChildExt;
 
 fn checked_pid(pid: u32) -> io::Result<Pid> {
@@ -31,152 +19,52 @@ fn checked_pid(pid: u32) -> io::Result<Pid> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))
 }
 
-pub fn run(options: &Options, command: &[OsString]) -> i32 {
-    run_inner(options, command).unwrap_or_else(|error| {
-        eprintln!("caffeinate: {error}");
-        1
-    })
+pub(crate) fn update(power: &mut Power, _: &Options, active: bool) -> Result<(), String> {
+    if !active {
+        power.end_activity();
+    }
+    Ok(())
 }
 
-fn run_inner(options: &Options, command: &[OsString]) -> Result<i32, String> {
-    if let Some((program, args)) = command.split_first() {
-        let power = Power::start(options)?;
-        let started = Instant::now();
-        let _signals = TerminalSignals::listen().map_err(|error| error.to_string())?;
-        let mut child = match Command::new(program).args(args).spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                eprintln!(
-                    "caffeinate: could not start {}: {error}",
-                    Path::new(program).display()
-                );
-                return Ok(if error.kind() == io::ErrorKind::NotFound {
-                    127
-                } else {
-                    126
-                });
-            }
-        };
-
-        if options.timeout().is_none() && !options.user_active {
-            let status = child.wait();
-            drop(power);
-            return child_status(status);
-        }
-
-        let result = wait(options, started, power, true, |duration| match duration {
+pub(crate) fn wait(
+    _: &Power,
+    target: &mut Target<'_>,
+    duration: Option<Duration>,
+) -> Result<bool, String> {
+    let duration = duration.map(|value| value.min(Duration::from_secs(86_400)));
+    let result = match target {
+        Target::Child(child) => match duration {
             Some(duration) => child.wait_timeout(duration).map(|status| status.is_some()),
             None => child.wait().map(|_| true),
-        });
-        if let Err(error) = result {
-            eprintln!("caffeinate: {error}");
-        }
-        return child_status(child.wait());
-    }
-
-    let process = match options.wait {
-        Some(pid) => match Process::open(pid.get())
-            .map_err(|error| format!("watching process {pid}: {error}"))?
-        {
-            Some(process) => Some(process),
-            None => return Ok(0),
         },
-        None => None,
-    };
-    let power = Power::start(options)?;
-    wait(
-        options,
-        Instant::now(),
-        power,
-        process.is_some(),
-        |duration| {
-            if let Some(process) = &process {
-                return process.wait(duration);
-            }
+        Target::Process(process) => process.wait(duration),
+        Target::Idle => {
             match duration {
                 Some(duration) => thread::sleep(duration),
                 None => thread::park(),
             }
-            Ok(false)
-        },
-    )?;
-    Ok(0)
-}
-
-fn child_status(status: io::Result<std::process::ExitStatus>) -> Result<i32, String> {
-    let status = status.map_err(|error| format!("waiting for the command: {error}"))?;
-    Ok(status
-        .code()
-        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
-}
-
-fn wait(
-    options: &Options,
-    started: Instant,
-    mut power: Power,
-    watching_process: bool,
-    mut wait_for_exit: impl FnMut(Option<Duration>) -> io::Result<bool>,
-) -> Result<(), String> {
-    let timeout = options.timeout();
-    let activity_only =
-        !watching_process && !(options.display || options.idle || options.system || options.disk);
-    let mut activity = options.activity_timeout();
-    let timeout = timeout.or(activity.filter(|_| activity_only));
-
-    loop {
-        let elapsed = started.elapsed();
-        let remaining = timeout.map(|limit| limit.saturating_sub(elapsed));
-        if remaining == Some(Duration::ZERO) {
-            return Ok(());
+            return Ok(false);
         }
-
-        let mut user_remaining = activity.map(|limit| limit.saturating_sub(elapsed));
-        if user_remaining == Some(Duration::ZERO) {
-            power.end_activity();
-            activity = None;
-            user_remaining = None;
-        }
-
-        let duration = remaining
-            .into_iter()
-            .chain(user_remaining)
-            .min()
-            .map(|duration| duration.min(Duration::from_secs(86_400)));
-        match wait_for_exit(duration) {
-            Ok(true) => return Ok(()),
-            Ok(false) => {}
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(format!("waiting for the process: {error}")),
-        }
+    };
+    match result {
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(false),
+        result => result.map_err(|error| format!("waiting for the process: {error}")),
     }
 }
 
-struct TerminalSignals([Option<SigId>; 2]);
-
-impl TerminalSignals {
-    fn listen() -> io::Result<Self> {
-        let mut scope = Self([None; 2]);
-        let caught = Arc::default();
-        // A terminal sends these to the whole foreground job, including the child.
-        for (slot, signal) in scope.0.iter_mut().zip([SIGINT, SIGQUIT]) {
-            *slot = Some(flag::register(signal, Arc::clone(&caught))?);
-        }
-        Ok(scope)
+pub(crate) fn protect_terminal() -> io::Result<()> {
+    let caught = Arc::default();
+    // The child receives these signals independently as part of the foreground job.
+    for signal in [SIGINT, SIGQUIT] {
+        flag::register(signal, Arc::clone(&caught))?;
     }
-}
-
-impl Drop for TerminalSignals {
-    fn drop(&mut self) {
-        for id in self.0.into_iter().flatten() {
-            low_level::unregister(id);
-        }
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Stdio;
+    use std::process::{Command, Stdio};
 
     #[test]
     fn process_watch_waits_until_exit() {

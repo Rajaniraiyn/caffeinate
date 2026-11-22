@@ -1,32 +1,27 @@
 # caffeinate
 
-Keep your PC awake from the command line.
+Keep your computer awake from the command line.
 
 ## Install
 
-Run the Windows release once with mise. Ctrl+C ends the request.
+Releases are available for Windows, macOS, and Linux on x64 and Arm64.
+Run once with mise. Ctrl+C ends the request.
 
 ```powershell
-mise x github:Rajaniraiyn/caffinate@0.1.1 -- caffeinate -disu
+mise x github:Rajaniraiyn/caffinate@0.2.0 -- caffeinate -isu
 ```
 
-Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate@0.1.1`.
-Use `mise install github:Rajaniraiyn/caffinate@0.1.1` to download the release
+Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate@0.2.0`.
+Use `mise install github:Rajaniraiyn/caffinate@0.2.0` to download the release
 without changing that config.
 
-Cargo builds the tagged source. On Windows, it needs Rust 1.91 or newer and
-the MSVC build tools.
-
-```powershell
-cargo install --locked --git https://github.com/Rajaniraiyn/caffinate --tag v0.1.1
-```
-
-Build the macOS or Linux port from this checkout with Rust 1.91 or newer.
-Linux also needs `pkg-config` and libdbus headers, such as `libdbus-1-dev` on
+Linux binaries need glibc 2.35 or newer and libdbus. To build from source,
+use Rust 1.91 or newer. Windows builds need the MSVC build tools. Linux builds
+also need `pkg-config` and libdbus headers, such as `libdbus-1-dev` on
 Debian or Ubuntu.
 
 ```sh
-cargo install --path . --locked
+cargo install --locked --git https://github.com/Rajaniraiyn/caffinate --tag v0.2.0
 ```
 
 ## Use
@@ -45,7 +40,7 @@ caffeinate -i make
 ```
 
 The default keeps the system from idling to sleep. A command takes precedence
-over `/wait` and keeps its exit code. A timeout releases the request while the
+over `-w` and keeps its exit code. A timeout releases the request while the
 command can continue running.
 
 Use `--` before a command name that looks like a switch. System power policy
@@ -68,7 +63,7 @@ from Linux 5.3.
 
 For a manual release, set the version in `Cargo.toml`, run
 `cargo update --workspace`, and commit both Cargo files. Push the matching
-`vMAJOR.MINOR.PATCH` tag to publish x64 and Arm64 ZIPs and their checksums.
+`vMAJOR.MINOR.PATCH` tag to publish the archives and SHA-256 checksums.
 
 To pick the version automatically, run the Release workflow from the default
 branch with the tag field empty. It uses the manifest version for the first

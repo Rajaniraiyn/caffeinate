@@ -6,26 +6,12 @@ use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::time::Duration;
 use usage_rs::embedded::{Exit, Outcome};
-use usage_rs::{Args, Cli, Error, Event, Parser};
+use usage_rs::{Cli, Error, Event, Parser};
 
 /// Prevent idle sleep while a command runs or until a timeout.
 #[derive(Cli, Debug)]
 #[usage(bin = "caffeinate", unknown_flags = "error", disable_help_subcommand)]
 #[cfg_attr(windows, usage(after_help = "Slash switches are case-insensitive."))]
-struct Invocation {
-    #[usage(flatten)]
-    options: Options,
-
-    /// Command to run while the request is active.
-    #[usage(double_dash = "automatic", value_name = "COMMAND")]
-    _command: Option<OsString>,
-
-    /// Arguments passed through to the command.
-    #[usage(double_dash = "preserve", value_name = "ARGUMENT")]
-    _arguments: Vec<OsString>,
-}
-
-#[derive(Args, Debug)]
 pub struct Options {
     /// Keep the display on and prevent idle sleep.
     #[usage(short, long)]
@@ -54,6 +40,14 @@ pub struct Options {
     /// Prevent disk idle sleep where supported.
     #[usage(short = 'm', long)]
     pub disk: bool,
+
+    /// Command to run while the request is active.
+    #[usage(double_dash = "automatic", value_name = "COMMAND")]
+    _command: Option<OsString>,
+
+    /// Arguments passed through to the command.
+    #[usage(double_dash = "preserve", value_name = "ARGUMENT")]
+    _arguments: Vec<OsString>,
 }
 
 impl Options {
@@ -80,7 +74,7 @@ pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
     let words: Vec<_> = normalized.iter().map(Cow::as_ref).collect();
     #[cfg(not(windows))]
     let words: Vec<_> = args.iter().map(OsString::as_os_str).collect();
-    let mut parser = Parser::new(Invocation::command(), &words);
+    let mut parser = Parser::new(Options::command(), &words);
     let mut count = 0;
     while let Some(Ok(event)) = parser.next_event() {
         count += usize::from(matches!(event, Event::Arg { .. }));
@@ -89,15 +83,15 @@ pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
     // command without converting or copying its arguments.
     let command_start = args.len() - count;
     let options = &words[..command_start];
-    match Invocation::parse_from(options) {
-        Ok(invocation) => Outcome::Parsed((invocation.options, &args[command_start..])),
+    match Options::parse_from(options) {
+        Ok(options) => Outcome::Parsed((options, &args[command_start..])),
         Err(Error::Help { cmd, long }) => Outcome::Exit(Exit {
-            text: Invocation::render_help(cmd, long).unwrap_or_default(),
+            text: Options::render_help(cmd, long).unwrap_or_default(),
             stderr: false,
             code: 0,
         }),
         Err(error) => Outcome::Exit(Exit {
-            text: Invocation::render_failure(options, &error),
+            text: Options::render_failure(options, &error),
             stderr: true,
             code: 2,
         }),

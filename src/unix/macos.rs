@@ -47,13 +47,13 @@ impl Drop for Assertion {
     }
 }
 
-pub(super) struct Power {
+pub(crate) struct Power {
     _assertions: [Option<Assertion>; 4],
     activity: Option<Assertion>,
 }
 
 impl Power {
-    pub(super) fn start(options: &Options) -> Result<Self, String> {
+    pub(crate) fn start(options: &Options) -> Result<Self, String> {
         let timeout = options.timeout();
         let assertions = [
             (options.keep_idle(), "PreventUserIdleSystemSleep"),
@@ -77,15 +77,15 @@ impl Power {
         })
     }
 
-    pub(super) fn end_activity(&mut self) {
+    pub(crate) fn end_activity(&mut self) {
         self.activity = None;
     }
 }
 
-pub(super) struct Process(OwnedFd);
+pub(crate) struct Process(OwnedFd);
 
 impl Process {
-    pub(super) fn open(pid: u32) -> io::Result<Option<Self>> {
+    pub(crate) fn open(pid: u32) -> io::Result<Option<Self>> {
         let change = Event::new(
             EventFilter::Proc {
                 pid: checked_pid(pid)?,
@@ -111,7 +111,7 @@ impl Process {
         }
     }
 
-    pub(super) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
+    pub(crate) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
         let mut events = [MaybeUninit::uninit()];
         // SAFETY: No registrations or data pointers are passed to this call.
         let (ready, _) = unsafe { kevent(&self.0, &[], events.as_mut_slice(), timeout) }?;

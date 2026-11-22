@@ -1,6 +1,6 @@
 use super::checked_pid;
 use crate::cli::Options;
-use dbus::blocking::Connection;
+use dbus::blocking::{Connection, Proxy};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use rustix::process::{PidfdFlags, pidfd_open};
@@ -12,14 +12,14 @@ const BUS_TIMEOUT: Duration = Duration::from_secs(2);
 const APP: &str = "caffeinate";
 const REASON: &str = "Prevent idle sleep";
 
-pub(super) struct Power {
+pub(crate) struct Power {
     _system: Option<OwnedFd>,
     display: Option<DisplayLock>,
     keep_display: bool,
 }
 
 impl Power {
-    pub(super) fn start(options: &Options) -> Result<Self, String> {
+    pub(crate) fn start(options: &Options) -> Result<Self, String> {
         if options.disk {
             return Err("Disk idle requests are unavailable.".into());
         }
@@ -41,7 +41,7 @@ impl Power {
         })
     }
 
-    pub(super) fn end_activity(&mut self) {
+    pub(crate) fn end_activity(&mut self) {
         if !self.keep_display {
             self.display = None;
         }
@@ -70,9 +70,7 @@ const SCREENSAVER: &str = "org.freedesktop.ScreenSaver";
 const GNOME: &str = "org.gnome.SessionManager";
 
 struct DisplayLock {
-    connection: Connection,
-    name: &'static str,
-    path: &'static str,
+    proxy: Proxy<'static, Connection>,
     cookie: u32,
 }
 
@@ -99,9 +97,7 @@ impl DisplayLock {
                         let _: Result<(), _> = proxy.method_call(name, "SimulateUserActivity", ());
                     }
                     return Ok(Self {
-                        connection,
-                        name,
-                        path,
+                        proxy: Proxy::new(name, path, BUS_TIMEOUT, connection),
                         cookie,
                     });
                 }
@@ -117,22 +113,20 @@ impl DisplayLock {
 
 impl Drop for DisplayLock {
     fn drop(&mut self) {
-        let proxy = self
-            .connection
-            .with_proxy(self.name, self.path, BUS_TIMEOUT);
-        let method = if self.name == GNOME {
+        let name = &*self.proxy.destination;
+        let method = if name == GNOME {
             "Uninhibit"
         } else {
             "UnInhibit"
         };
-        let _: Result<(), _> = proxy.method_call(self.name, method, (self.cookie,));
+        let _: Result<(), _> = self.proxy.method_call(name, method, (self.cookie,));
     }
 }
 
-pub(super) struct Process(OwnedFd);
+pub(crate) struct Process(OwnedFd);
 
 impl Process {
-    pub(super) fn open(pid: u32) -> io::Result<Option<Self>> {
+    pub(crate) fn open(pid: u32) -> io::Result<Option<Self>> {
         match pidfd_open(checked_pid(pid)?, PidfdFlags::empty()) {
             Ok(fd) => Ok(Some(Self(fd))),
             Err(Errno::SRCH) => Ok(None),
@@ -140,7 +134,7 @@ impl Process {
         }
     }
 
-    pub(super) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
+    pub(crate) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
         let mut fds = [PollFd::new(&self.0, PollFlags::IN)];
         let timeout = timeout.map(|duration| Timespec {
             tv_sec: duration.as_secs() as i64,

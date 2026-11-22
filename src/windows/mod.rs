@@ -1,182 +1,112 @@
-use crate::cli::Options;
 mod power;
 
 use self::power::{PowerRequests, PowerSource, reset_display_timer};
-use std::ffi::OsString;
-use std::io;
-use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
-use std::process::Command;
-use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{
-    ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, WAIT_FAILED, WAIT_OBJECT_0,
-    WAIT_TIMEOUT,
+use crate::{cli::Options, runtime::Target};
+use std::{
+    io,
+    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    time::Duration,
 };
-use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler};
-use windows_sys::Win32::System::Threading::{
-    INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, Sleep, WaitForMultipleObjects, WaitForSingleObject,
+use windows_sys::Win32::{
+    Foundation::{ERROR_INVALID_PARAMETER, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+    System::{
+        Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler},
+        Threading::{
+            INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, Sleep, WaitForMultipleObjects,
+            WaitForSingleObject,
+        },
+    },
 };
-use windows_sys::core::BOOL;
 
-pub fn run(options: &Options, command: &[OsString]) -> i32 {
-    if options.disk {
-        eprintln!("caffeinate: Disk idle requests are unavailable.");
-        return ERROR_NOT_SUPPORTED as i32;
+pub(crate) fn protect_terminal() -> io::Result<()> {
+    // The child receives the same console event as the wrapper.
+    unsafe extern "system" fn utility_control(event: u32) -> i32 {
+        i32::from(matches!(event, CTRL_C_EVENT | CTRL_BREAK_EVENT))
     }
-
-    match execute(options, command) {
-        Ok(status) => status,
-        Err(error) => {
-            eprintln!("caffeinate: {error}");
-            1
-        }
+    if unsafe { SetConsoleCtrlHandler(Some(utility_control), 1) } == 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(())
 }
 
-fn execute(options: &Options, command: &[OsString]) -> Result<i32, String> {
-    if let Some((program, args)) = command.split_first() {
-        let session = Session::start(options)?;
-        if unsafe { SetConsoleCtrlHandler(Some(utility_control), 1) } == 0 {
-            return Err(format!(
-                "Setting the console control handler failed. {}",
-                io::Error::last_os_error()
-            ));
-        }
-        let mut child = match Command::new(program).args(args).spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                eprintln!(
-                    "caffeinate: Could not start '{}'. {error}",
-                    program.to_string_lossy()
-                );
-                return Ok(error.raw_os_error().unwrap_or_else(|| {
-                    if error.kind() == io::ErrorKind::NotFound {
-                        ERROR_FILE_NOT_FOUND as i32
-                    } else {
-                        1
-                    }
-                }));
-            }
-        };
-        if (options.timeout().is_some() || options.system || options.user_active)
-            && let Err(error) = session.wait(options, Some(child.as_handle()))
-        {
-            eprintln!("caffeinate: {error}");
-        }
-        return command_status(child.wait());
-    }
+pub(crate) struct Process(OwnedHandle);
 
-    let process = match options.wait {
-        Some(pid) => {
-            let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid.get()) };
-            if handle.is_null() {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
-                    return Ok(0);
-                }
-                return Err(format!("Opening process {pid} failed. {error}"));
-            }
+impl Process {
+    pub(crate) fn open(pid: u32) -> io::Result<Option<Self>> {
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if !handle.is_null() {
             // SAFETY: OpenProcess returned an owned handle.
-            Some(unsafe { OwnedHandle::from_raw_handle(handle) })
+            return Ok(Some(Self(unsafe { OwnedHandle::from_raw_handle(handle) })));
         }
-        None => None,
-    };
-    Session::start(options)?.wait(options, process.as_ref().map(AsHandle::as_handle))?;
-    Ok(0)
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Ok(None),
+            _ => Err(error),
+        }
+    }
 }
 
-fn command_status(status: io::Result<std::process::ExitStatus>) -> Result<i32, String> {
-    status
-        .map(|status| status.code().unwrap_or(1))
-        .map_err(|error| format!("Waiting for the command failed. {error}"))
-}
-
-// The child shares the console and handles its own Ctrl+C and Ctrl+Break events.
-unsafe extern "system" fn utility_control(event: u32) -> BOOL {
-    i32::from(matches!(event, CTRL_C_EVENT | CTRL_BREAK_EVENT))
-}
-
-struct Session {
-    started: Instant,
+pub(crate) struct Power {
     source: Option<PowerSource>,
     requests: Option<PowerRequests>,
 }
 
-impl Session {
-    fn start(options: &Options) -> Result<Self, String> {
-        let mut session = Self {
-            started: Instant::now(),
+impl Power {
+    pub(crate) fn start(options: &Options) -> Result<Self, String> {
+        let mut power = Self {
             source: options.system.then(PowerSource::subscribe).transpose()?,
             requests: None,
         };
-        session.refresh(options, options.user_active)?;
+        update(&mut power, options, options.user_active)?;
         if options.user_active {
             reset_display_timer()?;
         }
-        Ok(session)
-    }
-
-    fn refresh(&mut self, options: &Options, user_active: bool) -> Result<(), String> {
-        let on_ac = self
-            .source
-            .as_ref()
-            .map(PowerSource::on_ac)
-            .transpose()?
-            .unwrap_or(false);
-        let display = options.display || user_active;
-        let system = options.keep_idle() || display || on_ac;
-        if system {
-            let requests = match &mut self.requests {
-                Some(requests) => requests,
-                slot => slot.insert(PowerRequests::new()?),
-            };
-            requests.set_display(display)?;
-        } else {
-            self.requests = None;
-        }
-        Ok(())
-    }
-
-    fn wait(
-        mut self,
-        options: &Options,
-        process: Option<BorrowedHandle<'_>>,
-    ) -> Result<(), String> {
-        let timeout = options.timeout();
-        let user_timeout = options.activity_timeout();
-        let activity_only =
-            process.is_none() && !(options.display || options.keep_idle() || options.system);
-        let timeout = timeout.or(user_timeout.filter(|_| activity_only));
-        loop {
-            let elapsed = self.started.elapsed();
-            let remaining = timeout.map(|timeout| timeout.saturating_sub(elapsed));
-            if remaining == Some(Duration::ZERO) {
-                // Dropping this session releases requests before the caller waits for the command.
-                return Ok(());
-            }
-            let user_remaining = user_timeout
-                .map(|timeout| timeout.saturating_sub(elapsed))
-                .filter(|remaining| !remaining.is_zero());
-            self.refresh(options, user_remaining.is_some())?;
-            let deadline = remaining.into_iter().chain(user_remaining).min();
-            let changed = self.source.as_ref().map(PowerSource::event);
-            if wait_for_process(process, changed, wait_millis(deadline))? {
-                return Ok(());
-            }
-        }
+        Ok(power)
     }
 }
 
-fn wait_for_process(
-    process: Option<BorrowedHandle<'_>>,
-    changed: Option<BorrowedHandle<'_>>,
-    milliseconds: u32,
+pub(crate) fn update(power: &mut Power, options: &Options, active: bool) -> Result<(), String> {
+    let on_ac = power
+        .source
+        .as_ref()
+        .map(PowerSource::on_ac)
+        .transpose()?
+        .unwrap_or(false);
+    let display = options.display || active;
+    if options.keep_idle() || display || on_ac {
+        let requests = match &mut power.requests {
+            Some(requests) => requests,
+            slot => slot.insert(PowerRequests::new()?),
+        };
+        requests.set_display(display)?;
+    } else {
+        power.requests = None;
+    }
+    Ok(())
+}
+
+pub(crate) fn wait(
+    power: &Power,
+    target: &mut Target<'_>,
+    duration: Option<Duration>,
 ) -> Result<bool, String> {
-    let process = process.as_ref().map(AsRawHandle::as_raw_handle);
+    let process = match target {
+        Target::Idle => None,
+        Target::Process(process) => Some(process.0.as_raw_handle()),
+        Target::Child(child) => Some(child.as_raw_handle()),
+    };
+    let changed = power.source.as_ref().map(PowerSource::event);
     let changed = changed.as_ref().map(AsRawHandle::as_raw_handle);
+    let milliseconds = duration.map_or(INFINITE, |value| {
+        value
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .min(u128::from(INFINITE - 1)) as u32
+    });
     let result = unsafe {
         match (process, changed) {
-            (Some(process), Some(changed)) => {
-                WaitForMultipleObjects(2, [process, changed].as_ptr(), 0, milliseconds)
+            (Some(process), Some(event)) => {
+                WaitForMultipleObjects(2, [process, event].as_ptr(), 0, milliseconds)
             }
             (Some(handle), None) | (None, Some(handle)) => {
                 WaitForSingleObject(handle, milliseconds)
@@ -194,13 +124,4 @@ fn wait_for_process(
         event if event == WAIT_OBJECT_0 + 1 && changed.is_some() => Ok(false),
         event => Err(format!("Unexpected wait result {event}.")),
     }
-}
-
-fn wait_millis(duration: Option<Duration>) -> u32 {
-    duration.map_or(INFINITE, |value| {
-        value
-            .as_nanos()
-            .div_ceil(1_000_000)
-            .min(u128::from(INFINITE - 1)) as u32
-    })
 }
