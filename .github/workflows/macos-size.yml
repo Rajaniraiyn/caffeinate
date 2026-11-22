@@ -1,0 +1,87 @@
+name: macOS size comparison
+on:
+  push:
+    branches: [macos-size-check]
+permissions:
+  contents: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15-intel, target: x86_64-apple-darwin, arch: x86_64}
+          - {runner: macos-15, target: aarch64-apple-darwin, arch: arm64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      TOOLCHAIN: nightly-2026-11-20
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and compare
+        shell: bash
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --target "$TARGET" --component rust-src
+          mkdir -p "$RUNNER_TEMP/binaries"
+          published="$RUNNER_TEMP/binaries"
+          mac_flags='-Z stack-protector=strong -C link-arg=-Wl,-dead_strip_dylibs'
+          export RUSTFLAGS="$mac_flags"
+          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
+          cp "target/$TARGET/release/caffeinate" "$published/baseline"
+          export RUSTFLAGS="$mac_flags -Z location-detail=none"
+          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
+            -Z build-std=std,panic_abort -Z build-std-features=
+          cp "target/$TARGET/release/caffeinate" "$published/rebuilt"
+          export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
+          cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
+            -Z build-std=std,panic_abort -Z build-std-features= -Z panic-immediate-abort
+          cp "target/$TARGET/release/caffeinate" "$published/immediate-z"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=s cargo +"$TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate \
+            -Z build-std=std,panic_abort -Z build-std-features= -Z panic-immediate-abort
+          cp "target/$TARGET/release/caffeinate" "$published/immediate-s"
+          system=/usr/bin/caffeinate
+          if [[ "$(lipo -archs "$system")" == *" "* ]]; then
+            lipo -thin "$ARCH" "$system" -output "$published/apple"
+          else
+            cp "$system" "$published/apple"
+          fi
+          for binary in "$published"/*; do
+            printf '%s bytes=%s gzip=%s\n' "${binary##*/}" "$(stat -f '%z' "$binary")" "$(gzip -n -c "$binary" | wc -c | tr -d ' ')"
+            otool -l "$binary" | awk '/cmd LC_BUILD_VERSION/{n=5} n{print; n--}'
+          done
+          python3 - "$published" <<'PY'
+          from pathlib import Path
+          import subprocess
+          from sys import argv
+          from time import monotonic
+
+          root = Path(argv[1])
+          def run(path, args):
+              result = subprocess.run([str(path), *args], capture_output=True, timeout=10)
+              return result.returncode, result.stdout, result.stderr
+
+          cases = [
+              (["--help"], 0), (["--not-a-flag"], 2),
+              (["-it1"], 0), (["-dt1"], 0), (["-ut1"], 0),
+              (["-it1", "/bin/sh", "-c", "sleep 2; exit 37"], 37),
+          ]
+          baseline = root / "baseline"
+          for args, status in cases:
+              expected = run(baseline, args)
+              assert expected[0] == status, (args, expected)
+              for profile in ("rebuilt", "immediate-z", "immediate-s"):
+                  actual = run(root / profile, args)
+                  assert actual == expected, (profile, args, actual, expected)
+
+          for profile in ("baseline", "rebuilt", "immediate-z", "immediate-s"):
+              with subprocess.Popen(["sleep", "2"]) as child:
+                  start = monotonic()
+                  result = run(root / profile, ["-iw", str(child.pid)])
+                  elapsed = monotonic() - start
+                  assert result[0] == 0 and 1.5 <= elapsed <= 6, (profile, result, elapsed)
+          print("All variants passed help, errors, assertions, command exit, and PID wait")
+          PY
