@@ -1,12 +1,12 @@
 use crate::Request;
 use objc2_core_foundation::CFString;
 use objc2_io_kit::{IOPMAssertionCreateWithDescription, IOPMAssertionID, IOPMAssertionRelease};
-use std::time::Duration;
+use std::{io, time::Duration};
 
 struct Assertion(IOPMAssertionID);
 
 impl Assertion {
-    fn new(kind: &'static str, timeout: Option<Duration>) -> Result<Self, String> {
+    fn new(kind: &'static str, timeout: Option<Duration>) -> io::Result<Self> {
         let assertion_type = CFString::from_static_str(kind);
         let name = CFString::from_static_str("caffeinate");
         let action = CFString::from_static_str("TimeoutActionRelease");
@@ -25,10 +25,10 @@ impl Assertion {
             )
         };
         if result != 0 {
-            return Err(format!(
+            return Err(io::Error::other(format!(
                 "could not create {kind} assertion (IOKit {:#010x})",
                 result as u32
-            ));
+            )));
         }
         Ok(Self(id))
     }
@@ -46,7 +46,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Request) -> Result<Self, String> {
+    pub(crate) fn start(options: &Request) -> io::Result<Self> {
         let timeout = options.timeout();
         let assertions = [
             (options.keep_idle(), "PreventUserIdleSystemSleep"),

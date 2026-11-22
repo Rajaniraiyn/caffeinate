@@ -21,7 +21,7 @@ fn checked_pid(pid: u32) -> io::Result<Pid> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))
 }
 
-pub(crate) fn update(power: &mut Power, _: &Request, active: bool) -> Result<(), String> {
+pub(crate) fn update(power: &mut Power, _: &Request, active: bool) -> io::Result<()> {
     if !active {
         power.end_activity();
     }

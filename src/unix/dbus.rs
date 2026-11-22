@@ -2,8 +2,8 @@ use crate::Request;
 use dbus::blocking::{BlockingSender, Connection};
 use dbus::channel::Sender;
 use dbus::{Error, Message};
-use std::os::fd::OwnedFd;
 use std::time::Duration;
+use std::{io, os::fd::OwnedFd};
 
 const BUS_TIMEOUT: Duration = Duration::from_secs(2);
 const APP: &str = "caffeinate";
@@ -16,7 +16,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Request) -> Result<Self, String> {
+    pub(crate) fn start(options: &Request) -> io::Result<Self> {
         let system = if options.system {
             Some(inhibit_system("sleep:idle")?)
         } else if options.keep_idle() {
@@ -41,11 +41,11 @@ impl Power {
     }
 }
 
-fn inhibit_system(what: &str) -> Result<OwnedFd, String> {
+fn inhibit_system(what: &str) -> io::Result<OwnedFd> {
     let connection = Connection::new_system()
-        .map_err(|error| format!("connecting to the system bus: {error}"))?;
+        .map_err(|error| bus_error(error, "connecting to the system bus"))?;
     request_system(&connection, what)
-        .map_err(|error| format!("requesting a sleep inhibitor: {error}"))
+        .map_err(|error| bus_error(error, "requesting a sleep inhibitor"))
 }
 
 fn request_system(connection: &Connection, what: &str) -> Result<OwnedFd, Error> {
@@ -87,14 +87,33 @@ fn missing_endpoint(error: &Error) -> bool {
     )
 }
 
+fn bus_error(error: Error, operation: &str) -> io::Error {
+    use io::ErrorKind::{Other, PermissionDenied, TimedOut, Unsupported};
+    let kind = match error.name() {
+        Some(
+            "org.freedesktop.DBus.Error.AccessDenied"
+            | "org.freedesktop.DBus.Error.AuthFailed"
+            | "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired",
+        ) => PermissionDenied,
+        Some(
+            "org.freedesktop.DBus.Error.NoReply"
+            | "org.freedesktop.DBus.Error.Timeout"
+            | "org.freedesktop.DBus.Error.TimedOut",
+        ) => TimedOut,
+        _ if missing_endpoint(&error) => Unsupported,
+        _ => Other,
+    };
+    io::Error::new(kind, format!("{operation}: {error}"))
+}
+
 const SCREENSAVER: &str = "org.freedesktop.ScreenSaver";
 const GNOME: &str = "org.gnome.SessionManager";
 const XFCE: &str = "org.xfce.ScreenSaver";
 const MATE: &str = "org.mate.ScreenSaver";
 
-fn inhibit_display(wake_display: bool) -> Result<Connection, String> {
+fn inhibit_display(wake_display: bool) -> io::Result<Connection> {
     let connection = Connection::new_session()
-        .map_err(|error| format!("connecting to the desktop session: {error}"))?;
+        .map_err(|error| bus_error(error, "connecting to the desktop session"))?;
     for (name, path) in [
         (XFCE, "/org/xfce/ScreenSaver"),
         (MATE, "/org/mate/ScreenSaver"),
@@ -141,14 +160,13 @@ fn inhibit_display(wake_display: bool) -> Result<Connection, String> {
                 return Ok(connection);
             }
             Err(error) if missing_endpoint(&error) => (),
-            Err(error) => {
-                return Err(format!(
-                    "requesting display inhibition from {name}: {error}"
-                ));
-            }
+            Err(error) => return Err(bus_error(error, name)),
         }
     }
-    Err("no desktop idle-inhibit service responded".into())
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no desktop idle-inhibit service responded",
+    ))
 }
 
 #[cfg(test)]
@@ -164,6 +182,16 @@ mod tests {
         thread,
         time::Instant,
     };
+
+    #[test]
+    fn access_denied_is_not_a_missing_endpoint() {
+        let error = Error::new_custom("org.freedesktop.DBus.Error.AccessDenied", "denied");
+        assert!(!missing_endpoint(&error));
+        assert_eq!(
+            bus_error(error, "sleep").kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
 
     #[test]
     #[ignore = "requires a private D-Bus session"]
@@ -218,7 +246,11 @@ mod tests {
                 observer.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", BUS_TIMEOUT);
             let deadline = Instant::now() + BUS_TIMEOUT;
             while bus
-                .method_call("org.freedesktop.DBus", "NameHasOwner", (client.as_str(),))
+                .method_call::<(bool,), _, _, _>(
+                    "org.freedesktop.DBus",
+                    "NameHasOwner",
+                    (client.as_str(),),
+                )
                 .unwrap()
                 == (true,)
             {

@@ -38,7 +38,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Request) -> Result<Self, String> {
+    pub(crate) fn start(options: &Request) -> io::Result<Self> {
         let mut power = Self {
             source: options.system.then(PowerSource::subscribe).transpose()?,
             requests: None,
@@ -51,7 +51,7 @@ impl Power {
     }
 }
 
-pub(crate) fn update(power: &mut Power, options: &Request, active: bool) -> Result<(), String> {
+pub(crate) fn update(power: &mut Power, options: &Request, active: bool) -> io::Result<()> {
     let on_ac = power
         .source
         .as_ref()

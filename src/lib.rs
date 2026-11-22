@@ -54,8 +54,10 @@ pub struct Request {
 impl Request {
     /// Acquire power requests and release them when the returned guard is dropped.
     ///
-    /// Use a wait method to enforce timing and track AC power changes across
-    /// platforms. Acquiring a guard starts no background thread.
+    /// Use a wait method to enforce timeout and display activity limits across
+    /// platforms, and to track AC power changes on Windows. macOS can also
+    /// release timed assertions on its own. Acquiring a guard starts no
+    /// background thread.
     pub fn acquire(self) -> io::Result<Inhibitor> {
         #[cfg(not(target_os = "macos"))]
         if self.disk {
@@ -66,7 +68,7 @@ impl Request {
         }
         #[cfg(windows)]
         let started = Instant::now();
-        let power = Power::start(&self).map_err(io::Error::other)?;
+        let power = Power::start(&self)?;
         #[cfg(unix)]
         let started = Instant::now();
         Ok(Inhibitor {
@@ -163,8 +165,7 @@ impl Inhibitor {
             let active = activity
                 .and_then(|limit| limit.checked_sub(elapsed))
                 .filter(|duration| !duration.is_zero());
-            platform::update(&mut self.power, request, active.is_some())
-                .map_err(io::Error::other)?;
+            platform::update(&mut self.power, request, active.is_some())?;
             if platform::wait(
                 &self.power,
                 &mut target,

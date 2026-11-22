@@ -40,9 +40,9 @@ pub struct PowerSource {
 }
 
 impl PowerSource {
-    pub fn subscribe() -> Result<Self, String> {
+    pub fn subscribe() -> io::Result<Self> {
         let handle = unsafe { CreateEventW(null(), 0, 0, null()) };
-        check(!handle.is_null(), "Creating the power notification event")?;
+        check(!handle.is_null())?;
         // SAFETY: CreateEventW returned an owned handle.
         let event = Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) });
         let id = {
@@ -50,7 +50,7 @@ impl PowerSource {
             let id = subscriptions.next;
             subscriptions.next = id
                 .checked_add(1)
-                .ok_or("Power notification IDs exhausted.")?;
+                .ok_or_else(|| io::Error::other("Power notification IDs exhausted."))?;
             subscriptions.events.push((id, Arc::clone(&event)));
             id
         };
@@ -70,10 +70,7 @@ impl PowerSource {
         };
         if status != ERROR_SUCCESS {
             remove_subscription(id);
-            let error = io::Error::from_raw_os_error(status as i32);
-            return Err(format!(
-                "Registering for power-source changes failed. {error}"
-            ));
+            return Err(io::Error::from_raw_os_error(status as i32));
         }
         Ok(Self {
             registration: registration as HPOWERNOTIFY,
@@ -86,12 +83,9 @@ impl PowerSource {
         self.event.as_handle()
     }
 
-    pub fn on_ac(&self) -> Result<bool, String> {
+    pub fn on_ac(&self) -> io::Result<bool> {
         let mut status = SYSTEM_POWER_STATUS::default();
-        check(
-            unsafe { GetSystemPowerStatus(&mut status) } != 0,
-            "Reading the power source",
-        )?;
+        check(unsafe { GetSystemPowerStatus(&mut status) } != 0)?;
         Ok(status.ACLineStatus == 1)
     }
 }
@@ -124,9 +118,9 @@ unsafe extern "system" fn power_changed(context: *const c_void, _: u32, _: *cons
     ERROR_SUCCESS
 }
 
-pub fn reset_display_timer() -> Result<(), String> {
+pub fn reset_display_timer() -> io::Result<()> {
     if unsafe { SetThreadExecutionState(ES_DISPLAY_REQUIRED) } == 0 {
-        return Err("Resetting the display idle timer failed.".into());
+        return Err(io::Error::other("Resetting the display idle timer failed."));
     }
     Ok(())
 }
@@ -137,7 +131,7 @@ pub struct PowerRequests {
 }
 
 impl PowerRequests {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> io::Result<Self> {
         let reason = REASON_CONTEXT {
             Version: POWER_REQUEST_CONTEXT_VERSION,
             Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
@@ -146,20 +140,17 @@ impl PowerRequests {
             },
         };
         let handle = unsafe { PowerCreateRequest(&reason) };
-        check(handle != INVALID_HANDLE_VALUE, "Creating the power request")?;
+        check(handle != INVALID_HANDLE_VALUE)?;
         // SAFETY: PowerCreateRequest returned an owned handle.
         let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-        check(
-            unsafe { PowerSetRequest(handle.as_raw_handle(), PowerRequestSystemRequired) } != 0,
-            "Setting the system power request",
-        )?;
+        check(unsafe { PowerSetRequest(handle.as_raw_handle(), PowerRequestSystemRequired) } != 0)?;
         Ok(Self {
             handle,
             display: false,
         })
     }
 
-    pub fn set_display(&mut self, display: bool) -> Result<(), String> {
+    pub fn set_display(&mut self, display: bool) -> io::Result<()> {
         if self.display != display {
             let handle = self.handle.as_raw_handle();
             let result = unsafe {
@@ -169,19 +160,16 @@ impl PowerRequests {
                     PowerClearRequest(handle, PowerRequestDisplayRequired)
                 }
             };
-            check(result != 0, "Updating the display power request")?;
+            check(result != 0)?;
             self.display = display;
         }
         Ok(())
     }
 }
 
-fn check(success: bool, operation: &str) -> Result<(), String> {
+fn check(success: bool) -> io::Result<()> {
     if !success {
-        return Err(format!(
-            "{operation} failed. {}",
-            io::Error::last_os_error()
-        ));
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }
