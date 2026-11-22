@@ -37,23 +37,25 @@ the command keeps running and caffeinate still returns its exit status.
 
 ✓ Supported · △ Depends on power, session services, or kernel version · — Unavailable
 
-| Feature | Windows | macOS | Linux | FreeBSD |
-| --- | --- | --- | --- | --- |
-| Idle sleep `-i` | △ Modern Standby battery limit | ✓ | △ Sleep service | △ ConsoleKit2 |
-| Display `-d` | ✓ | ✓ | △ Desktop session service | △ Desktop session service |
-| System sleep `-s` | △ On AC power | △ On AC power | △ Sleep service | △ ConsoleKit2 |
-| User activity `-u` | ✓ | ✓ | △ Desktop session service | △ Desktop session service |
-| Disk idle `-m` | — | ✓ | — | — |
-| Timeout `-t` | ✓ | ✓ | ✓ | ✓ |
-| Watch a PID `-w` | ✓ | ✓ | △ Kernel 5.3+ | ✓ |
-| Wrap a command | ✓ | ✓ | ✓ | ✓ |
+| Feature | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Idle sleep `-i` | △ Modern Standby battery limit | ✓ | △ Sleep service |
+| Display `-d` | ✓ | ✓ | △ Desktop session service |
+| System sleep `-s` | △ On AC power | △ On AC power | △ Sleep service |
+| User activity `-u` | ✓ | ✓ | △ Desktop session service |
+| Disk idle `-m` | — | ✓ | — |
+| Timeout `-t` | ✓ | ✓ | ✓ |
+| Watch a PID `-w` | ✓ | ✓ | △ Kernel 5.3+ |
+| Wrap a command | ✓ | ✓ | ✓ |
 
 On Windows devices with Modern Standby, battery power limits sleep inhibition
 to five minutes past the system's sleep timeout.
 [Windows power requests](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powersetrequest)
 
 On Linux, sleep inhibition uses logind, elogind, or ConsoleKit2.
-On Linux and FreeBSD, display behavior depends on your desktop session.
+The sleep service may require authorization for remote sessions.
+Wrapped commands also work when pidfds are unavailable.
+Display behavior depends on the desktop session.
 
 | Session service | Keep display on `-d` | Signal activity `-u` |
 | --- | --- | --- |
@@ -93,7 +95,6 @@ mise use -g github:Rajaniraiyn/caffinate
 
 Build with stable Rust 1.91 or newer. Windows requires the MSVC build tools.
 Linux requires `pkg-config` and libdbus headers for glibc, or a C compiler for musl.
-On FreeBSD, install `rust`, `dbus`, and `pkgconf` with `pkg`.
 
 ```sh
 cargo install --locked --git https://github.com/Rajaniraiyn/caffinate

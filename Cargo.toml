@@ -26,7 +26,7 @@ signal-hook = { version = "0.4", optional = true, default-features = false }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["alloc", "CFString"] }
 objc2-io-kit = { version = "0.3", default-features = false, features = ["pwr_mgt"] }
 
-[target.'cfg(any(target_os = "freebsd", all(target_os = "linux", not(target_env = "musl"))))'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 dbus = { version = "0.9", default-features = false, features = ["stdfd"] }
 
 [target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]

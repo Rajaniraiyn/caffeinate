@@ -9,15 +9,10 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-#[cfg(not(any(
-    windows,
-    target_os = "macos",
-    target_os = "linux",
-    target_os = "freebsd"
-)))]
-compile_error!("caffeinate supports Windows, macOS, Linux, and FreeBSD");
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+compile_error!("caffeinate supports Windows, macOS, and Linux");
 
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "unix/mod.rs"]
 mod platform;
 #[cfg(windows)]

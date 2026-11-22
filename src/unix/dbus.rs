@@ -56,7 +56,6 @@ fn request_system(connection: &Connection, what: &str) -> Result<OwnedFd, Error>
             (what, APP, REASON, "block"),
         )
     };
-    #[cfg(target_os = "linux")]
     match call(
         "org.freedesktop.login1",
         "/org/freedesktop/login1",

@@ -1,8 +1,8 @@
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
-#[cfg_attr(any(target_os = "linux", target_os = "freebsd"), path = "dbus.rs")]
+#[cfg_attr(target_os = "linux", path = "dbus.rs")]
 mod power;
 #[cfg_attr(target_os = "linux", path = "pidfd.rs")]
-#[cfg_attr(any(target_os = "macos", target_os = "freebsd"), path = "kqueue.rs")]
+#[cfg_attr(target_os = "macos", path = "kqueue.rs")]
 mod process;
 
 use crate::{Request, Target};
