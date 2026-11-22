@@ -8,7 +8,7 @@ Version: %{package_version}
 Release: 1
 Summary: Keep your computer awake from the command line
 License: (MIT OR Apache-2.0) AND AFL-2.1
-URL: https://github.com/Rajaniraiyn/caffinate
+URL: https://github.com/Rajaniraiyn/caffeinate
 AutoReq: no
 
 %description

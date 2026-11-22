@@ -1,7 +1,7 @@
 # caffeinate
 
-[![Latest release](https://img.shields.io/github/v/release/Rajaniraiyn/caffinate)](https://github.com/Rajaniraiyn/caffinate/releases/latest)
-[![Build status](https://github.com/Rajaniraiyn/caffinate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/Rajaniraiyn/caffinate/actions/workflows/check.yml?query=branch%3Amain)
+[![Latest release](https://img.shields.io/github/v/release/Rajaniraiyn/caffeinate)](https://github.com/Rajaniraiyn/caffeinate/releases/latest)
+[![Build status](https://github.com/Rajaniraiyn/caffeinate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/Rajaniraiyn/caffeinate/actions/workflows/check.yml?query=branch%3Amain)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20or%20Apache--2.0-blue.svg)](#license)
 
 Keep SSH sessions, downloads, and long builds running while you're away.
@@ -82,13 +82,13 @@ installation. Install a downloaded Linux package with
 `sudo dnf install ./caffeinate-linux-*.rpm`.
 On macOS, run `./caffeinate` from the extracted archive to select this build.
 
-[Release notes and checksums](https://github.com/Rajaniraiyn/caffinate/releases/latest)
+[Release notes and checksums](https://github.com/Rajaniraiyn/caffeinate/releases/latest)
 
 ### mise
 
 ```sh
-mise x github:Rajaniraiyn/caffinate -- caffeinate -i
-mise use -g github:Rajaniraiyn/caffinate
+mise x github:Rajaniraiyn/caffeinate -- caffeinate -i
+mise use -g github:Rajaniraiyn/caffeinate
 ```
 
 ### Cargo
@@ -97,14 +97,14 @@ Build with stable Rust 1.91 or newer. Windows requires the MSVC build tools.
 Linux requires `pkg-config` and libdbus headers for glibc, or a C compiler for musl.
 
 ```sh
-cargo install --locked --git https://github.com/Rajaniraiyn/caffinate
+cargo install --locked --git https://github.com/Rajaniraiyn/caffeinate
 ```
 
 ## Rust library
 
 ```toml
 [dependencies]
-caffeinate = { git = "https://github.com/Rajaniraiyn/caffinate", default-features = false }
+caffeinate = { git = "https://github.com/Rajaniraiyn/caffeinate", default-features = false }
 ```
 
 ```rust
@@ -117,17 +117,17 @@ drop(awake);
 
 [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
 
-[win-x64-msi]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-x64.msi
-[win-arm64-msi]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-arm64.msi
-[win-x64-zip]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-x64.zip
-[win-arm64-zip]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-windows-arm64.zip
-[mac-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-macos-x64.tar.gz
-[mac-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-macos-arm64.tar.gz
-[deb-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64.deb
-[deb-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64.deb
-[rpm-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64.rpm
-[rpm-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64.rpm
-[musl-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64-musl.tar.gz
-[musl-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64-musl.tar.gz
-[glibc-x64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-x64-glibc.tar.gz
-[glibc-arm64]: https://github.com/Rajaniraiyn/caffinate/releases/latest/download/caffeinate-linux-arm64-glibc.tar.gz
+[win-x64-msi]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-windows-x64.msi
+[win-arm64-msi]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-windows-arm64.msi
+[win-x64-zip]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-windows-x64.zip
+[win-arm64-zip]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-windows-arm64.zip
+[mac-x64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-macos-x64.tar.gz
+[mac-arm64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-macos-arm64.tar.gz
+[deb-x64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-x64.deb
+[deb-arm64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-arm64.deb
+[rpm-x64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-x64.rpm
+[rpm-arm64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-arm64.rpm
+[musl-x64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-x64-musl.tar.gz
+[musl-arm64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-arm64-musl.tar.gz
+[glibc-x64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-x64-glibc.tar.gz
+[glibc-arm64]: https://github.com/Rajaniraiyn/caffeinate/releases/latest/download/caffeinate-linux-arm64-glibc.tar.gz
