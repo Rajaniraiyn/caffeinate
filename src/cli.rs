@@ -66,6 +66,11 @@ impl Options {
     pub fn keep_idle(&self) -> bool {
         self.idle || !(self.display || self.system || self.user_active || self.disk)
     }
+
+    pub fn activity_timeout(&self) -> Option<Duration> {
+        self.user_active
+            .then(|| self.timeout().unwrap_or(Duration::from_secs(5)))
+    }
 }
 
 pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {

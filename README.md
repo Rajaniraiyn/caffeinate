@@ -52,12 +52,14 @@ Use `--` before a command name that looks like a switch. System power policy
 controls when requests take effect.
 
 On macOS, IOKit supplies the idle, display, system, disk and user-activity
-assertions. The wrapped command runs as a child process.
+assertions. The wrapped command runs as a child process. On macOS and Windows,
+`-s` applies only on AC power.
 [Apple's reference implementation](https://github.com/apple-oss-distributions/PowerManagement/blob/main/caffeinate/caffeinate.c)
 
 On Linux, `-i` blocks logind or elogind suspend, and `-s` also blocks its idle
 action. Display options need a compatible ScreenSaver or GNOME session
-service. A bare window manager may provide neither. Linux has no portable
+service. Waking a display with `-u` depends on that service. A bare window
+manager may provide neither. Linux has no portable
 disk-idle request. Watching an existing PID with `-w` uses pidfds, available
 from Linux 5.3.
 [logind inhibitors](https://systemd.io/INHIBITOR_LOCKS/) · [Desktop idle inhibition](https://specifications.freedesktop.org/idle-inhibit/0.1/)

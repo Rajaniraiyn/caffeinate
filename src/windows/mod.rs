@@ -142,9 +142,7 @@ impl Session {
         process: Option<BorrowedHandle<'_>>,
     ) -> Result<(), String> {
         let timeout = options.timeout();
-        let user_timeout = options
-            .user_active
-            .then_some(timeout.unwrap_or(Duration::from_secs(5)));
+        let user_timeout = options.activity_timeout();
         let activity_only =
             process.is_none() && !(options.display || options.keep_idle() || options.system);
         let timeout = timeout.or(user_timeout.filter(|_| activity_only));

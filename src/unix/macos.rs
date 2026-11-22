@@ -1,24 +1,24 @@
-use super::ACTIVITY_TIMEOUT;
+use super::checked_pid;
 use crate::cli::Options;
-use nix::{
-    errno::Errno,
-    libc::timespec,
-    sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue},
-};
 use objc2_core_foundation::CFString;
 use objc2_io_kit::{IOPMAssertionCreateWithDescription, IOPMAssertionID, IOPMAssertionRelease};
+use rustix::event::kqueue::{Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue};
+use rustix::io::Errno;
 use std::io;
+use std::mem::MaybeUninit;
+use std::os::fd::OwnedFd;
+use std::ptr::null_mut;
 use std::time::Duration;
 
 struct Assertion(IOPMAssertionID);
 
 impl Assertion {
-    fn new(kind: &str, timeout: Option<Duration>) -> Result<Self, String> {
-        let assertion_type = CFString::from_str(kind);
-        let name = CFString::from_str("caffeinate");
-        let action = CFString::from_str("TimeoutActionRelease");
+    fn new(kind: &'static str, timeout: Option<Duration>) -> Result<Self, String> {
+        let assertion_type = CFString::from_static_str(kind);
+        let name = CFString::from_static_str("caffeinate");
+        let action = CFString::from_static_str("TimeoutActionRelease");
         let mut id = 0;
-        // SAFETY: All borrowed strings live through the call and id is writable.
+        // SAFETY: The strings live through the call and id is writable.
         let result = unsafe {
             IOPMAssertionCreateWithDescription(
                 Some(&assertion_type),
@@ -68,8 +68,8 @@ impl Power {
             }
         }
         let activity = options
-            .user_active
-            .then(|| Assertion::new("UserIsActive", Some(timeout.unwrap_or(ACTIVITY_TIMEOUT))))
+            .activity_timeout()
+            .map(|timeout| Assertion::new("UserIsActive", Some(timeout)))
             .transpose()?;
         Ok(Self {
             _assertions: held,
@@ -82,41 +82,39 @@ impl Power {
     }
 }
 
-pub(super) struct Process(Kqueue);
+pub(super) struct Process(OwnedFd);
 
 impl Process {
     pub(super) fn open(pid: u32) -> io::Result<Option<Self>> {
-        let pid = i32::try_from(pid)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))?;
-        let queue = Kqueue::new()?;
-        let change = KEvent::new(
-            pid as usize,
-            EventFilter::EVFILT_PROC,
-            EvFlags::EV_ADD | EvFlags::EV_ONESHOT,
-            FilterFlag::NOTE_EXIT,
-            0,
-            0,
+        let change = Event::new(
+            EventFilter::Proc {
+                pid: checked_pid(pid)?,
+                flags: ProcessEvents::EXIT,
+            },
+            EventFlags::ADD | EventFlags::ONESHOT,
+            null_mut(),
         );
-        match queue.kevent(&[change], &mut [], None) {
+        let queue = kqueue()?;
+        let mut events: [Event; 0] = [];
+        // SAFETY: The event refers to a PID and carries no data pointer.
+        match unsafe {
+            kevent(
+                &queue,
+                &[change],
+                events.as_mut_slice(),
+                Some(Duration::ZERO),
+            )
+        } {
             Ok(_) => Ok(Some(Self(queue))),
-            Err(Errno::ESRCH) => Ok(None),
+            Err(Errno::SRCH) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
 
     pub(super) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
-        let timeout = timeout.map(|duration| timespec {
-            tv_sec: duration.as_secs() as i64,
-            tv_nsec: duration.subsec_nanos().into(),
-        });
-        let mut events = [KEvent::new(
-            0,
-            EventFilter::EVFILT_PROC,
-            EvFlags::empty(),
-            FilterFlag::empty(),
-            0,
-            0,
-        )];
-        Ok(self.0.kevent(&[], &mut events, timeout)? > 0)
+        let mut events = [MaybeUninit::uninit()];
+        // SAFETY: No registrations or data pointers are passed to this call.
+        let (ready, _) = unsafe { kevent(&self.0, &[], events.as_mut_slice(), timeout) }?;
+        Ok(!ready.is_empty())
     }
 }

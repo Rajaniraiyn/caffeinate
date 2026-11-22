@@ -8,6 +8,7 @@ use crate::cli::Options;
 use linux::{Power, Process};
 #[cfg(target_os = "macos")]
 use macos::{Power, Process};
+use rustix::process::Pid;
 use signal_hook::{
     SigId,
     consts::{SIGINT, SIGQUIT},
@@ -23,7 +24,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 
-const ACTIVITY_TIMEOUT: Duration = Duration::from_secs(5);
+fn checked_pid(pid: u32) -> io::Result<Pid> {
+    i32::try_from(pid)
+        .ok()
+        .and_then(Pid::from_raw)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))
+}
 
 pub fn run(options: &Options, command: &[OsString]) -> i32 {
     run_inner(options, command).unwrap_or_else(|error| {
@@ -114,9 +120,7 @@ fn wait(
     let timeout = options.timeout();
     let activity_only =
         !watching_process && !(options.display || options.idle || options.system || options.disk);
-    let mut activity = options
-        .user_active
-        .then_some(timeout.unwrap_or(ACTIVITY_TIMEOUT));
+    let mut activity = options.activity_timeout();
     let timeout = timeout.or(activity.filter(|_| activity_only));
 
     loop {

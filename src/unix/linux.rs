@@ -1,8 +1,9 @@
+use super::checked_pid;
 use crate::cli::Options;
 use dbus::blocking::Connection;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
-use rustix::process::{Pid, PidfdFlags, pidfd_open};
+use rustix::process::{PidfdFlags, pidfd_open};
 use std::io;
 use std::os::fd::OwnedFd;
 use std::time::Duration;
@@ -132,11 +133,7 @@ pub(super) struct Process(OwnedFd);
 
 impl Process {
     pub(super) fn open(pid: u32) -> io::Result<Option<Self>> {
-        let pid = i32::try_from(pid)
-            .ok()
-            .and_then(Pid::from_raw)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))?;
-        match pidfd_open(pid, PidfdFlags::empty()) {
+        match pidfd_open(checked_pid(pid)?, PidfdFlags::empty()) {
             Ok(fd) => Ok(Some(Self(fd))),
             Err(Errno::SRCH) => Ok(None),
             Err(error) => Err(error.into()),

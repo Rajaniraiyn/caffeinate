@@ -35,6 +35,7 @@ jobs:
           cargo +stable test --locked
           cargo +stable clippy --locked --all-targets -- -D warnings
           cargo +stable build --release --locked
+          wc -c target/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}
 
       - name: Check Unix commands and the native inhibitor
         if: runner.os != 'Windows'
