@@ -8,7 +8,7 @@ use std::time::Duration;
 use usage_rs::embedded::{Exit, Outcome};
 use usage_rs::{Cli, Error, Event, Parser};
 
-/// Prevent idle sleep while a command runs or until a timeout.
+/// Keep your computer awake from the command line.
 #[derive(Cli, Debug)]
 #[usage(bin = "caffeinate", unknown_flags = "error", disable_help_subcommand)]
 #[cfg_attr(windows, usage(after_help = "Slash switches are case-insensitive."))]

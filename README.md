@@ -4,16 +4,15 @@
 [![Build status](https://github.com/Rajaniraiyn/caffeinate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/Rajaniraiyn/caffeinate/actions/workflows/check.yml?query=branch%3Amain)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20or%20Apache--2.0-blue.svg)](#license)
 
-Keep SSH sessions, downloads, and long builds running while you're away.
-Run `caffeinate -i` to prevent idle sleep and let the display turn off.
-Press Ctrl+C when you're done.
+Keep your computer awake from the command line. Prevent idle sleep, keep the
+display on, or hold a power request while a command or process runs.
 
 [Download caffeinate](#install) · [Run with mise](#mise)
 
 ## Use
 
 ```sh
-caffeinate -i                  # Keep the computer awake for SSH
+caffeinate -i                  # Prevent idle sleep and let the display turn off
 caffeinate -d -t 300           # Keep the display on for five minutes
 caffeinate -i -- make          # Stay awake until make exits
 caffeinate -i -w 1234          # Stay awake until process 1234 exits
@@ -30,8 +29,9 @@ caffeinate -i -w 1234          # Stay awake until process 1234 exits
 | `-w`, `--wait PID` | Release the request when a process exits. |
 | `-h`, `--help` | Show usage. |
 
-A wrapped command takes precedence over `-w`. If a timeout expires first,
-the command keeps running and caffeinate still returns its exit status.
+Press Ctrl+C to end a standalone request. A wrapped command takes precedence
+over `-w`. If a timeout expires first, the command keeps running and
+caffeinate still returns its exit status.
 
 ## Platform support
 
