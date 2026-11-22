@@ -25,7 +25,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config strace
 
       - name: Check and build
         shell: bash
@@ -43,6 +43,18 @@ jobs:
       - name: Check Linux desktop D-Bus calls
         if: runner.os == 'Linux'
         run: dbus-run-session -- cargo +stable test --locked --lib platform::power -- --ignored --test-threads=1
+
+      - name: Check Linux command timeouts without pidfds
+        if: runner.os == 'Linux'
+        run: |
+          status=0
+          sudo strace -qq -e trace=pidfd_open -e inject=pidfd_open:error=ENOSYS \
+            -o "$RUNNER_TEMP/pidfd.trace" target/release/caffeinate -it1 /bin/sh -c 'sleep 2; exit 37' \
+            2>"$RUNNER_TEMP/child.stderr" || status=$?
+          grep -q 'ENOSYS.*INJECTED' "$RUNNER_TEMP/pidfd.trace"
+          cat "$RUNNER_TEMP/child.stderr"
+          test ! -s "$RUNNER_TEMP/child.stderr"
+          test "$status" -eq 37
 
       - name: Check Unix commands and the native inhibitor
         if: runner.os != 'Windows'
