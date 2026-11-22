@@ -76,8 +76,6 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       TARGET: ${{ matrix.target }}
-      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C control-flow-guard -C link-arg=/CETCOMPAT
-      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: -C control-flow-guard
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -95,16 +93,16 @@ jobs:
         if: "!matrix.musl"
         run: |
           rustup toolchain install stable --profile minimal
-          rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
-          case "$PLATFORM" in
-            linux) export RUSTFLAGS='-Z stack-protector=strong' ;;
-            macos) export RUSTFLAGS='-Z stack-protector=strong -C link-arg=-Wl,-dead_strip_dylibs' ;;
-          esac
-          cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
-          unset RUSTFLAGS CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS
+          bash .github/scripts/build-release.sh
           if [[ "$PLATFORM-$ARCH" != windows-arm64 ]]; then
             cargo +stable test --locked --target "$TARGET"
-            "./target/$TARGET/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}" --help
+            binary="./target/$TARGET/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}"
+            "$binary" --help
+            if [[ "$PLATFORM" == linux ]]; then
+              sudo -- "$binary" -it1
+            else
+              "$binary" -it1
+            fi
           fi
       - name: Build and test on Alpine
         if: matrix.musl
@@ -113,10 +111,8 @@ jobs:
             -e RELEASE_TOOLCHAIN -e CFLAGS=-fstack-protector-strong \
             -e CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
             rust:1-alpine3.21 sh -ec '
-              apk add --no-cache build-base
-              rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
-              RUSTFLAGS="-C target-feature=+crt-static -Z stack-protector=strong" \
-                cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
+              apk add --no-cache bash build-base
+              bash .github/scripts/build-release.sh
               RUSTFLAGS="-C target-feature=+crt-static" cargo test --locked --target "$TARGET"
               release="target/$TARGET/release"
               "$release/caffeinate" --help
@@ -131,11 +127,13 @@ jobs:
             echo 'Expected a static musl binary' >&2
             exit 1
           fi
+          sudo -- "./target/$TARGET/release/caffeinate" -it1
       - name: Package binary
         run: |
           mkdir -p dist
           name="caffeinate-$PLATFORM-$ARCH"
           release="$PWD/target/$TARGET/release"
+          wc -c "$release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}"
           case "$PLATFORM" in
             windows)
               cp LICENSE-MIT LICENSE-APACHE "$release"
