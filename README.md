@@ -39,14 +39,18 @@ the command keeps running and caffeinate still returns its exit status.
 
 | Feature | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| Idle sleep `-i` | ✓ | ✓ | △ logind or elogind |
+| Idle sleep `-i` | △ Modern Standby battery limit | ✓ | △ logind or elogind |
 | Display `-d` | ✓ | ✓ | △ Desktop session service |
 | System sleep `-s` | △ On AC power | △ On AC power | △ logind or elogind, including its idle action |
 | User activity `-u` | ✓ | ✓ | △ Desktop session service |
 | Disk idle `-m` | — | ✓ | — |
 | Timeout `-t` | ✓ | ✓ | ✓ |
 | Watch a PID `-w` | ✓ | ✓ | △ Kernel 5.3+ |
-| Wrap a command | ✓ | ✓ | ✓ Kernel 5.3+ with `-t` or `-u` |
+| Wrap a command | ✓ | ✓ | △ Kernel 5.3+ with `-t` or `-u` |
+
+On Windows devices with Modern Standby, battery power limits sleep inhibition
+to five minutes past the system's sleep timeout.
+[Windows power requests](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powersetrequest)
 
 On Linux, display behavior depends on the service in your desktop session.
 
