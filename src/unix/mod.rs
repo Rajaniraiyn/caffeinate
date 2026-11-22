@@ -2,15 +2,10 @@
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 mod backend;
 
-use crate::{cli::Options, runtime::Target};
+use crate::{Request, Target};
 pub(crate) use backend::{Power, Process};
 use rustix::process::Pid;
-use signal_hook::{
-    consts::{SIGINT, SIGQUIT},
-    flag,
-};
-use std::{io, sync::Arc, thread, time::Duration};
-use wait_timeout::ChildExt;
+use std::{io, thread, time::Duration};
 
 fn checked_pid(pid: u32) -> io::Result<Pid> {
     i32::try_from(pid)
@@ -19,7 +14,7 @@ fn checked_pid(pid: u32) -> io::Result<Pid> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "PID is out of range"))
 }
 
-pub(crate) fn update(power: &mut Power, _: &Options, active: bool) -> Result<(), String> {
+pub(crate) fn update(power: &mut Power, _: &Request, active: bool) -> Result<(), String> {
     if !active {
         power.end_activity();
     }
@@ -33,10 +28,6 @@ pub(crate) fn wait(
 ) -> Result<bool, String> {
     let duration = duration.map(|value| value.min(Duration::from_secs(86_400)));
     let result = match target {
-        Target::Child(child) => match duration {
-            Some(duration) => child.wait_timeout(duration).map(|status| status.is_some()),
-            None => child.wait().map(|_| true),
-        },
         Target::Process(process) => process.wait(duration),
         Target::Idle => {
             match duration {
@@ -50,15 +41,6 @@ pub(crate) fn wait(
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(false),
         result => result.map_err(|error| format!("waiting for the process: {error}")),
     }
-}
-
-pub(crate) fn protect_terminal() -> io::Result<()> {
-    let caught = Arc::default();
-    // The child receives these signals independently as part of the foreground job.
-    for signal in [SIGINT, SIGQUIT] {
-        flag::register(signal, Arc::clone(&caught))?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

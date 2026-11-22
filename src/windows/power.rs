@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::io;
 use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::ptr::{null, null_mut};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Power::{
     DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, ES_DISPLAY_REQUIRED, GetSystemPowerStatus, HPOWERNOTIFY,
@@ -18,41 +19,58 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::DEVICE_NOTIFY_CALLBACK;
 
-// A callback can still signal the event during unregistration.
-static POWER_CHANGED: OnceLock<OwnedHandle> = OnceLock::new();
+// A delayed callback looks up its event without dereferencing its context.
+static SUBSCRIPTIONS: Mutex<Subscriptions> = Mutex::new(Subscriptions {
+    next: 1,
+    events: BTreeMap::new(),
+});
+
+struct Subscriptions {
+    next: usize,
+    events: BTreeMap<usize, Arc<OwnedHandle>>,
+}
+
+fn subscriptions() -> MutexGuard<'static, Subscriptions> {
+    SUBSCRIPTIONS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub struct PowerSource {
     registration: HPOWERNOTIFY,
-    event: &'static OwnedHandle,
+    parameters: Option<Box<DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS>>,
+    event: Arc<OwnedHandle>,
 }
 
 impl PowerSource {
     pub fn subscribe() -> Result<Self, String> {
-        let event = if let Some(event) = POWER_CHANGED.get() {
-            event
-        } else {
-            let handle = unsafe { CreateEventW(null(), 0, 0, null()) };
-            check(!handle.is_null(), "Creating the power notification event")?;
-            // SAFETY: CreateEventW returned an owned handle.
-            let event = unsafe { OwnedHandle::from_raw_handle(handle) };
-            POWER_CHANGED.get_or_init(|| event)
+        let handle = unsafe { CreateEventW(null(), 0, 0, null()) };
+        check(!handle.is_null(), "Creating the power notification event")?;
+        // SAFETY: CreateEventW returned an owned handle.
+        let event = Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) });
+        let id = {
+            let mut subscriptions = subscriptions();
+            let id = subscriptions.next;
+            subscriptions.next = id
+                .checked_add(1)
+                .ok_or("Power notification IDs exhausted.")?;
+            subscriptions.events.insert(id, Arc::clone(&event));
+            id
         };
-
-        let parameters: &'static _ = &DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
+        let mut parameters = Box::new(DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
             Callback: Some(power_changed),
-            Context: null_mut(),
-        };
+            Context: std::ptr::without_provenance_mut(id),
+        });
         let mut registration = null_mut();
         // SAFETY: The callback and its parameters outlive Win32's registration.
         let status = unsafe {
             PowerSettingRegisterNotification(
                 &GUID_ACDC_POWER_SOURCE,
                 DEVICE_NOTIFY_CALLBACK,
-                std::ptr::from_ref(parameters).cast_mut().cast(),
+                std::ptr::from_mut(parameters.as_mut()).cast(),
                 &mut registration,
             )
         };
         if status != ERROR_SUCCESS {
+            subscriptions().events.remove(&id);
             let error = io::Error::from_raw_os_error(status as i32);
             return Err(format!(
                 "Registering for power-source changes failed. {error}"
@@ -60,6 +78,7 @@ impl PowerSource {
         }
         Ok(Self {
             registration: registration as HPOWERNOTIFY,
+            parameters: Some(parameters),
             event,
         })
     }
@@ -80,12 +99,19 @@ impl PowerSource {
 
 impl Drop for PowerSource {
     fn drop(&mut self) {
-        unsafe { PowerSettingUnregisterNotification(self.registration) };
+        let status = unsafe { PowerSettingUnregisterNotification(self.registration) };
+        if let Some(parameters) = self.parameters.take() {
+            subscriptions().events.remove(&parameters.Context.addr());
+            if status != ERROR_SUCCESS {
+                // Windows may still own the registration's pointer on failure.
+                let _ = Box::leak(parameters);
+            }
+        }
     }
 }
 
-unsafe extern "system" fn power_changed(_: *const c_void, _: u32, _: *const c_void) -> u32 {
-    if let Some(event) = POWER_CHANGED.get() {
+unsafe extern "system" fn power_changed(context: *const c_void, _: u32, _: *const c_void) -> u32 {
+    if let Some(event) = subscriptions().events.get(&context.addr()) {
         unsafe { SetEvent(event.as_raw_handle()) };
     }
     ERROR_SUCCESS
@@ -162,8 +188,15 @@ mod tests {
     #[test]
     #[ignore = "requires the Windows power notification service"]
     fn subscription_signals_the_initial_power_source() {
-        let source = PowerSource::subscribe().unwrap();
-        let result = unsafe { WaitForSingleObject(source.event().as_raw_handle(), 5_000) };
-        assert_eq!(result, WAIT_OBJECT_0);
+        let first = PowerSource::subscribe().unwrap();
+        let second = PowerSource::subscribe().unwrap();
+        assert_ne!(
+            first.event().as_raw_handle(),
+            second.event().as_raw_handle()
+        );
+        for source in [first, second] {
+            let result = unsafe { WaitForSingleObject(source.event().as_raw_handle(), 5_000) };
+            assert_eq!(result, WAIT_OBJECT_0);
+        }
     }
 }

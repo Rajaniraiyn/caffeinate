@@ -1,7 +1,7 @@
 mod power;
 
 use self::power::{PowerRequests, PowerSource, reset_display_timer};
-use crate::{cli::Options, runtime::Target};
+use crate::{Request, Target};
 use std::{
     io,
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
@@ -9,25 +9,11 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{ERROR_INVALID_PARAMETER, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
-    System::{
-        Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler},
-        Threading::{
-            INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, Sleep, WaitForMultipleObjects,
-            WaitForSingleObject,
-        },
+    System::Threading::{
+        INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, Sleep, WaitForMultipleObjects,
+        WaitForSingleObject,
     },
 };
-
-pub(crate) fn protect_terminal() -> io::Result<()> {
-    // The child receives the same console event as the wrapper.
-    unsafe extern "system" fn utility_control(event: u32) -> i32 {
-        i32::from(matches!(event, CTRL_C_EVENT | CTRL_BREAK_EVENT))
-    }
-    if unsafe { SetConsoleCtrlHandler(Some(utility_control), 1) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
 
 pub(crate) struct Process(OwnedHandle);
 
@@ -52,7 +38,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Options) -> Result<Self, String> {
+    pub(crate) fn start(options: &Request) -> Result<Self, String> {
         let mut power = Self {
             source: options.system.then(PowerSource::subscribe).transpose()?,
             requests: None,
@@ -65,7 +51,7 @@ impl Power {
     }
 }
 
-pub(crate) fn update(power: &mut Power, options: &Options, active: bool) -> Result<(), String> {
+pub(crate) fn update(power: &mut Power, options: &Request, active: bool) -> Result<(), String> {
     let on_ac = power
         .source
         .as_ref()

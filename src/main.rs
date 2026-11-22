@@ -1,13 +1,4 @@
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-compile_error!("caffeinate supports Windows, macOS, and Linux");
-
 mod cli;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-#[path = "unix/mod.rs"]
-mod platform;
-#[cfg(windows)]
-#[path = "windows/mod.rs"]
-mod platform;
 mod runtime;
 
 fn main() {

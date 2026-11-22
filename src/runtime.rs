@@ -1,18 +1,11 @@
 use crate::cli::Options;
-use crate::platform::{self, Power, Process};
+use caffeinate::Request;
 use std::{
     ffi::OsString,
     io,
     path::Path,
-    process::{Child, Command, ExitStatus},
-    time::{Duration, Instant},
+    process::{Command, ExitStatus},
 };
-
-pub(crate) enum Target<'a> {
-    Idle,
-    Process(&'a Process),
-    Child(&'a mut Child),
-}
 
 pub fn run(options: &Options, command: &[OsString]) -> i32 {
     #[cfg(windows)]
@@ -27,30 +20,28 @@ pub fn run(options: &Options, command: &[OsString]) -> i32 {
     })
 }
 
-fn execute(options: &Options, command: &[OsString]) -> Result<i32, String> {
-    let command = command.split_first();
-    let process = match (command.is_none(), options.wait) {
-        (true, Some(pid)) => match Process::open(pid.get())
-            .map_err(|error| format!("watching process {pid}: {error}"))?
-        {
-            Some(process) => Some(process),
-            None => return Ok(0),
-        },
-        _ => None,
+fn execute(options: &Options, command: &[OsString]) -> io::Result<i32> {
+    let mut request = Request::default();
+    request.display = options.display;
+    request.idle = options.idle;
+    request.system = options.system;
+    request.disk = options.disk;
+    request.user_active = options.user_active;
+    request.timeout = options.timeout();
+
+    let Some((program, args)) = command.split_first() else {
+        match options.wait {
+            Some(pid) => request
+                .wait_for_process(pid)
+                .map_err(|error| io::Error::other(format!("watching process {pid}: {error}")))?,
+            None => request.acquire()?.wait()?,
+        }
+        return Ok(0);
     };
 
-    #[cfg(windows)]
-    let started = Instant::now();
-    let power = Power::start(options)?;
-    #[cfg(unix)]
-    let started = Instant::now();
-
-    let Some((program, args)) = command else {
-        let target = process.as_ref().map_or(Target::Idle, Target::Process);
-        return hold(options, power, started, target).map(|()| 0);
-    };
-    platform::protect_terminal()
-        .map_err(|error| format!("setting up terminal controls: {error}"))?;
+    let inhibitor = request.acquire()?;
+    protect_terminal()
+        .map_err(|error| io::Error::other(format!("setting up terminal controls: {error}")))?;
     let mut child = match Command::new(program).args(args).spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -61,45 +52,45 @@ fn execute(options: &Options, command: &[OsString]) -> Result<i32, String> {
             return Ok(launch_status(&error));
         }
     };
-    if (options.timeout().is_some() || options.user_active || cfg!(windows) && options.system)
-        && let Err(error) = hold(options, power, started, Target::Child(&mut child))
-    {
+    if let Err(error) = inhibitor.wait_for_child(&mut child) {
         eprintln!("caffeinate: {error}");
     }
     child
         .wait()
         .map(exit_status)
-        .map_err(|error| format!("waiting for the command: {error}"))
+        .map_err(|error| io::Error::other(format!("waiting for the command: {error}")))
 }
 
-fn hold(
-    options: &Options,
-    mut power: Power,
-    started: Instant,
-    mut target: Target<'_>,
-) -> Result<(), String> {
-    let activity = options.activity_timeout();
-    let activity_only = matches!(target, Target::Idle)
-        && !(options.display || options.idle || options.system || options.disk);
-    let timeout = options.timeout().or(activity.filter(|_| activity_only));
-    loop {
-        let elapsed = started.elapsed();
-        let remaining = timeout.map(|limit| limit.saturating_sub(elapsed));
-        if remaining == Some(Duration::ZERO) {
-            return Ok(());
-        }
-        let active = activity
-            .and_then(|limit| limit.checked_sub(elapsed))
-            .filter(|duration| !duration.is_zero());
-        platform::update(&mut power, options, active.is_some())?;
-        if platform::wait(
-            &power,
-            &mut target,
-            remaining.into_iter().chain(active).min(),
-        )? {
-            return Ok(());
-        }
+#[cfg(unix)]
+fn protect_terminal() -> io::Result<()> {
+    use signal_hook::{
+        consts::{SIGINT, SIGQUIT},
+        flag,
+    };
+    use std::sync::Arc;
+
+    let caught = Arc::default();
+    // The child receives these signals independently as part of the foreground job.
+    for signal in [SIGINT, SIGQUIT] {
+        flag::register(signal, Arc::clone(&caught))?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn protect_terminal() -> io::Result<()> {
+    use windows_sys::Win32::System::Console::{
+        CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler,
+    };
+
+    // The child receives the same console event as the wrapper.
+    unsafe extern "system" fn utility_control(event: u32) -> i32 {
+        i32::from(matches!(event, CTRL_C_EVENT | CTRL_BREAK_EVENT))
+    }
+    if unsafe { SetConsoleCtrlHandler(Some(utility_control), 1) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn launch_status(error: &io::Error) -> i32 {

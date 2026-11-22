@@ -22,6 +22,7 @@ permissions:
 
 env:
   RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+  RELEASE_TOOLCHAIN: nightly-2026-11-20
 
 jobs:
   prepare:
@@ -92,8 +93,8 @@ jobs:
         if: "!matrix.musl"
         run: |
           rustup toolchain install stable --profile minimal
-          rustup target add --toolchain stable "$TARGET"
-          cargo +stable build --locked --release --target "$TARGET"
+          rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
+          cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
           if [[ "$PLATFORM-$ARCH" != windows-arm64 ]]; then
             cargo +stable test --locked --target "$TARGET"
             "./target/$TARGET/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}" --help
@@ -102,9 +103,11 @@ jobs:
         if: matrix.musl
         run: |
           docker run --rm -v "$PWD:/src" -w /src -e TARGET \
+            -e RELEASE_TOOLCHAIN -e CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
             -e RUSTFLAGS='-C target-feature=+crt-static' rust:1-alpine3.21 sh -ec '
               apk add --no-cache build-base
-              cargo build --locked --release --target "$TARGET"
+              rustup toolchain install "$RELEASE_TOOLCHAIN" --profile minimal --target "$TARGET"
+              cargo +"$RELEASE_TOOLCHAIN" build --locked --release --target "$TARGET" --bin caffeinate
               cargo test --locked --target "$TARGET"
               release="target/$TARGET/release"
               "$release/caffeinate" --help
@@ -123,17 +126,19 @@ jobs:
         run: |
           mkdir -p dist
           name="caffeinate-$TAG-$PLATFORM-$ARCH"
-          release="target/$TARGET/release"
-          cp LICENSE-MIT LICENSE-APACHE "$release"
+          release="$PWD/target/$TARGET/release"
           case "$PLATFORM" in
-            windows) (cd "$release" && python -m zipfile -c "../../../dist/$name.zip" caffeinate.exe LICENSE-MIT LICENSE-APACHE) ;;
+            windows)
+              cp LICENSE-MIT LICENSE-APACHE "$release"
+              (cd "$release" && python -m zipfile -c "../../../dist/$name.zip" caffeinate.exe LICENSE-MIT LICENSE-APACHE)
+              ;;
             linux|macos)
-              files=(caffeinate LICENSE-MIT LICENSE-APACHE)
+              files=(caffeinate)
               case "$TARGET" in
                 *-musl) name="$name-musl"; files+=(LICENSE-dbus.txt) ;;
                 *-gnu) name="$name-glibc" ;;
               esac
-              tar -czf "dist/$name.tar.gz" -C "$release" "${files[@]}"
+              tar -czf "dist/$name.tar.gz" LICENSE-MIT LICENSE-APACHE -C "$release" "${files[@]}"
               ;;
           esac
       - name: Build Debian and RPM packages
@@ -169,7 +174,7 @@ jobs:
           $exe = Join-Path $directory caffeinate.exe
           function Get-UserPathEntries {
             [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |
-              ForEach-Object { $_.TrimEnd('\') }
+              ForEach-Object { $_.TrimEnd('\') } | Where-Object { $_ }
           }
           function Invoke-Installer([string]$action) {
             $process = Start-Process msiexec.exe -ArgumentList "$action `"$msi`" /qn /norestart" -Wait -PassThru
@@ -187,7 +192,7 @@ jobs:
           if ((Test-Path $exe) -or $directory -in (Get-UserPathEntries)) {
             throw 'Uninstall left the binary or PATH entry behind'
           }
-          if (Compare-Object @($originalEntries) @(Get-UserPathEntries)) {
+          if (($originalEntries -join ';') -ne ((Get-UserPathEntries) -join ';')) {
             throw 'Install and uninstall changed unrelated PATH entries'
           }
       - uses: actions/upload-artifact@v4

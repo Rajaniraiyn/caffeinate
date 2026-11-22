@@ -56,15 +56,6 @@ impl Options {
             .filter(|&seconds| seconds != 0)
             .map(Duration::from_secs)
     }
-
-    pub fn keep_idle(&self) -> bool {
-        self.idle || !(self.display || self.system || self.user_active || self.disk)
-    }
-
-    pub fn activity_timeout(&self) -> Option<Duration> {
-        self.user_active
-            .then(|| self.timeout().unwrap_or(Duration::from_secs(5)))
-    }
 }
 
 pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
@@ -133,7 +124,7 @@ mod tests {
         assert_eq!(options.timeout(), Some(Duration::from_secs(16)));
         assert_eq!(options.wait.map(NonZeroU32::get), Some(32));
         assert!(command.is_empty());
-        assert!(parse(&[]).parsed().unwrap().0.keep_idle());
+        assert!(parse(&[]).parsed().is_some());
     }
 
     #[test]

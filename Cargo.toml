@@ -7,13 +7,20 @@ license = "MIT OR Apache-2.0"
 description = "Keep your computer awake from the command line."
 repository = "https://github.com/Rajaniraiyn/caffinate"
 
+[features]
+default = ["cli"]
+cli = ["dep:signal-hook", "dep:usage-rs"]
+
+[[bin]]
+name = "caffeinate"
+required-features = ["cli"]
+
 [dependencies]
-usage-rs = { version = "7.4", default-features = false, features = ["help", "diagnostics"] }
+usage-rs = { version = "7.4", optional = true, default-features = false, features = ["help", "diagnostics"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", default-features = false, features = ["std", "event", "process"] }
-signal-hook = { version = "0.4", default-features = false }
-wait-timeout = "0.2"
+signal-hook = { version = "0.4", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["alloc", "CFString"] }

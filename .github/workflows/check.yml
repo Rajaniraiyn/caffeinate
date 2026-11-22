@@ -37,6 +37,9 @@ jobs:
           cargo +stable build --release --locked
           wc -c target/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}
 
+          rustup toolchain install 1.91.0 --profile minimal
+          cargo +1.91.0 test --locked --no-default-features
+
       - name: Check Unix commands and the native inhibitor
         if: runner.os != 'Windows'
         shell: bash

@@ -1,5 +1,5 @@
 use super::checked_pid;
-use crate::cli::Options;
+use crate::Request;
 use dbus::blocking::Connection;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
@@ -19,11 +19,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Options) -> Result<Self, String> {
-        if options.disk {
-            return Err("Disk idle requests are unavailable.".into());
-        }
-
+    pub(crate) fn start(options: &Request) -> Result<Self, String> {
         let system = if options.system {
             Some(inhibit_system("sleep:idle")?)
         } else if options.keep_idle() {

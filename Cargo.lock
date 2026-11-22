@@ -18,7 +18,6 @@ dependencies = [
  "rustix",
  "signal-hook",
  "usage-rs",
- "wait-timeout",
  "windows-sys",
 ]
 
@@ -204,15 +203,6 @@ checksum = "45d66c7e40399fa69c0b963f265a307ddb7d59ca75b092387dca07b808f7b3ba"
 dependencies = [
  "usage-argv",
  "usage-derive",
-]
-
-[[package]]
-name = "wait-timeout"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
-dependencies = [
- "libc",
 ]
 
 [[package]]

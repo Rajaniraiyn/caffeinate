@@ -1,5 +1,5 @@
 use super::checked_pid;
-use crate::cli::Options;
+use crate::Request;
 use objc2_core_foundation::CFString;
 use objc2_io_kit::{IOPMAssertionCreateWithDescription, IOPMAssertionID, IOPMAssertionRelease};
 use rustix::event::kqueue::{Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue};
@@ -53,7 +53,7 @@ pub(crate) struct Power {
 }
 
 impl Power {
-    pub(crate) fn start(options: &Options) -> Result<Self, String> {
+    pub(crate) fn start(options: &Request) -> Result<Self, String> {
         let timeout = options.timeout();
         let assertions = [
             (options.keep_idle(), "PreventUserIdleSystemSleep"),

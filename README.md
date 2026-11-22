@@ -41,8 +41,24 @@ Press Ctrl+C to end a request. Run `caffeinate --help` for all options.
 
 On Windows and macOS, `-s` applies on AC power. On Linux, sleep inhibition
 needs logind or elogind, and display inhibition needs a compatible desktop
-session service. Linux has no disk-idle request, and `-w` needs Linux 5.3
-or newer.
+session service. Linux has no disk-idle request. Watching a PID or wrapping
+a command with a timeout or `-u` requires Linux 5.3 or newer.
+
+## Rust library
+
+The library and source builds use stable Rust. Add the dependency with CLI
+features disabled.
+
+```toml
+[dependencies]
+caffeinate = { git = "https://github.com/Rajaniraiyn/caffinate", default-features = false }
+```
+
+```rust
+let awake = caffeinate::Request::default().acquire()?;
+// Hold the guard while your work runs.
+drop(awake);
+```
 
 ## License
 
