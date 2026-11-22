@@ -1,6 +1,6 @@
 use super::checked_pid;
 use crate::cli::Options;
-use dbus::blocking::{Connection, Proxy};
+use dbus::blocking::Connection;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use rustix::process::{PidfdFlags, pidfd_open};
@@ -70,7 +70,9 @@ const SCREENSAVER: &str = "org.freedesktop.ScreenSaver";
 const GNOME: &str = "org.gnome.SessionManager";
 
 struct DisplayLock {
-    proxy: Proxy<'static, Connection>,
+    connection: Connection,
+    name: &'static str,
+    path: &'static str,
     cookie: u32,
 }
 
@@ -97,7 +99,9 @@ impl DisplayLock {
                         let _: Result<(), _> = proxy.method_call(name, "SimulateUserActivity", ());
                     }
                     return Ok(Self {
-                        proxy: Proxy::new(name, path, BUS_TIMEOUT, connection),
+                        connection,
+                        name,
+                        path,
                         cookie,
                     });
                 }
@@ -113,13 +117,15 @@ impl DisplayLock {
 
 impl Drop for DisplayLock {
     fn drop(&mut self) {
-        let name = &*self.proxy.destination;
-        let method = if name == GNOME {
+        let proxy = self
+            .connection
+            .with_proxy(self.name, self.path, BUS_TIMEOUT);
+        let method = if self.name == GNOME {
             "Uninhibit"
         } else {
             "UnInhibit"
         };
-        let _: Result<(), _> = self.proxy.method_call(name, method, (self.cookie,));
+        let _: Result<(), _> = proxy.method_call(self.name, method, (self.cookie,));
     }
 }
 

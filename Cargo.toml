@@ -3,7 +3,7 @@ name = "caffeinate"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.91"
-description = "Keep your PC awake from the command line."
+description = "Keep your computer awake from the command line."
 repository = "https://github.com/Rajaniraiyn/caffinate"
 
 [dependencies]

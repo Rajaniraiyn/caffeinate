@@ -8,7 +8,7 @@ Releases are available for Windows, macOS, and Linux on x64 and Arm64.
 Run once with mise. Ctrl+C ends the request.
 
 ```powershell
-mise x github:Rajaniraiyn/caffinate@0.2.0 -- caffeinate -isu
+mise x github:Rajaniraiyn/caffinate@0.2.0 -- caffeinate -disu
 ```
 
 Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate@0.2.0`.
