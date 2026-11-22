@@ -141,6 +141,27 @@ impl Drop for DisplayLock {
     }
 }
 
+pub(crate) struct Process(OwnedFd);
+
+impl Process {
+    pub(crate) fn open(pid: u32) -> io::Result<Option<Self>> {
+        match pidfd_open(checked_pid(pid)?, PidfdFlags::empty()) {
+            Ok(fd) => Ok(Some(Self(fd))),
+            Err(Errno::SRCH) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub(crate) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
+        let mut fds = [PollFd::new(&self.0, PollFlags::IN)];
+        let timeout = timeout.map(|duration| Timespec {
+            tv_sec: duration.as_secs() as i64,
+            tv_nsec: duration.subsec_nanos().into(),
+        });
+        Ok(poll(&mut fds, timeout.as_ref())? > 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,26 +215,5 @@ mod tests {
             finished.send(()).unwrap();
             server.join().unwrap();
         }
-    }
-}
-
-pub(crate) struct Process(OwnedFd);
-
-impl Process {
-    pub(crate) fn open(pid: u32) -> io::Result<Option<Self>> {
-        match pidfd_open(checked_pid(pid)?, PidfdFlags::empty()) {
-            Ok(fd) => Ok(Some(Self(fd))),
-            Err(Errno::SRCH) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub(crate) fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
-        let mut fds = [PollFd::new(&self.0, PollFlags::IN)];
-        let timeout = timeout.map(|duration| Timespec {
-            tv_sec: duration.as_secs() as i64,
-            tv_nsec: duration.subsec_nanos().into(),
-        });
-        Ok(poll(&mut fds, timeout.as_ref())? > 0)
     }
 }
