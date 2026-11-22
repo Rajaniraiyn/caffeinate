@@ -8,6 +8,10 @@ on:
       tag:
         description: Existing tag to release. Leave blank for the next version.
         type: string
+      build_only:
+        description: Build and test packages without publishing.
+        type: boolean
+        default: false
 
 concurrency:
   group: release
@@ -21,7 +25,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name == 'push' || github.ref_name == github.event.repository.default_branch
+    if: github.event_name == 'push' || inputs.build_only || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -59,6 +63,8 @@ jobs:
           - {runner: macos-15, platform: macos, arch: arm64, target: aarch64-apple-darwin}
           - {runner: ubuntu-22.04, platform: linux, arch: x64, target: x86_64-unknown-linux-gnu}
           - {runner: ubuntu-22.04-arm, platform: linux, arch: arm64, target: aarch64-unknown-linux-gnu}
+          - {runner: ubuntu-24.04, platform: linux, arch: x64, target: x86_64-unknown-linux-musl, musl: true}
+          - {runner: ubuntu-24.04-arm, platform: linux, arch: arm64, target: aarch64-unknown-linux-musl, musl: true}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     defaults:
@@ -78,11 +84,12 @@ jobs:
         with:
           name: manifests
       - name: Install libdbus headers
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.musl
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
       - name: Build and test
+        if: "!matrix.musl"
         run: |
           rustup toolchain install stable --profile minimal
           rustup target add --toolchain stable "$TARGET"
@@ -91,23 +98,107 @@ jobs:
             cargo +stable test --locked --target "$TARGET"
             "./target/$TARGET/release/caffeinate${{ runner.os == 'Windows' && '.exe' || '' }}" --help
           fi
+      - name: Build and test on Alpine
+        if: matrix.musl
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e TARGET \
+            -e RUSTFLAGS='-C target-feature=+crt-static' rust:1-alpine3.21 sh -ec '
+              apk add --no-cache build-base
+              cargo build --locked --release --target "$TARGET"
+              cargo test --locked --target "$TARGET"
+              release="target/$TARGET/release"
+              "$release/caffeinate" --help
+              for dbus in "$CARGO_HOME"/registry/src/*/libdbus-sys-*/vendor/dbus; do
+                crate=$(basename "$(dirname "$(dirname "$dbus")")")
+                version=${crate#libdbus-sys-}
+                printf "This distribution includes libdbus under AFL-2.1.\nSource: https://crates.io/api/v1/crates/libdbus-sys/%s/download\n\n" "$version"
+                cat "$dbus/COPYING"
+              done > "$release/LICENSE-dbus.txt"
+            '
+          if readelf -l "target/$TARGET/release/caffeinate" | grep -q INTERP; then
+            echo 'Expected a static musl binary' >&2
+            exit 1
+          fi
       - name: Package binary
         run: |
           mkdir -p dist
           name="caffeinate-$TAG-$PLATFORM-$ARCH"
+          release="target/$TARGET/release"
+          cp LICENSE-MIT LICENSE-APACHE "$release"
           case "$PLATFORM" in
-            windows) (cd "target/$TARGET/release" && python -m zipfile -c "../../../dist/$name.zip" caffeinate.exe) ;;
-            linux) tar -czf "dist/$name-glibc.tar.gz" -C "target/$TARGET/release" caffeinate ;;
-            macos) tar -czf "dist/$name.tar.gz" -C "target/$TARGET/release" caffeinate ;;
+            windows) (cd "$release" && python -m zipfile -c "../../../dist/$name.zip" caffeinate.exe LICENSE-MIT LICENSE-APACHE) ;;
+            linux|macos)
+              files=(caffeinate LICENSE-MIT LICENSE-APACHE)
+              case "$TARGET" in
+                *-musl) name="$name-musl"; files+=(LICENSE-dbus.txt) ;;
+                *-gnu) name="$name-glibc" ;;
+              esac
+              tar -czf "dist/$name.tar.gz" -C "$release" "${files[@]}"
+              ;;
           esac
+      - name: Build Debian and RPM packages
+        if: matrix.musl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rpm cpio
+          binary="$PWD/target/$TARGET/release/caffeinate"
+          bash .github/packaging/linux.sh "$binary" "${TAG#v}" "$(dirname "$binary")/LICENSE-dbus.txt" "$PWD/dist"
+          dpkg-deb --extract dist/*.deb "$RUNNER_TEMP/deb"
+          mkdir "$RUNNER_TEMP/rpm"
+          rpm2cpio dist/*.rpm | (cd "$RUNNER_TEMP/rpm" && cpio -id)
+          cmp "$binary" "$RUNNER_TEMP/deb/usr/bin/caffeinate"
+          cmp "$binary" "$RUNNER_TEMP/rpm/usr/bin/caffeinate"
+      - name: Build Windows Installer package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $wix = Join-Path $env:RUNNER_TEMP wix
+          dotnet tool install wix --version 6.0.2 --tool-path $wix
+          $version = $env:TAG.Substring(1)
+          $binary = "target/$env:TARGET/release/caffeinate.exe"
+          & "$wix/wix.exe" build .github/packaging/caffeinate.wxs -arch $env:ARCH `
+            -d "Version=$version" -d "Binary=$binary" -bindpath . -pdbtype none `
+            -o "dist/caffeinate-$env:TAG-windows-$env:ARCH.msi"
+      - name: Check Windows install and uninstall
+        if: runner.os == 'Windows' && matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $msi = (Get-Item dist/*.msi).FullName
+          $directory = Join-Path $env:LOCALAPPDATA caffeinate
+          $exe = Join-Path $directory caffeinate.exe
+          function Get-UserPathEntries {
+            [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |
+              ForEach-Object { $_.TrimEnd('\') }
+          }
+          function Invoke-Installer([string]$action) {
+            $process = Start-Process msiexec.exe -ArgumentList "$action `"$msi`" /qn /norestart" -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "msiexec $action returned $($process.ExitCode)" }
+          }
+          $originalEntries = Get-UserPathEntries
+          Invoke-Installer /i
+          try {
+            if ($directory -notin (Get-UserPathEntries)) { throw 'PATH entry missing after install' }
+            & $exe --help
+            if ($LASTEXITCODE -ne 0) { throw "caffeinate returned $LASTEXITCODE" }
+          } finally {
+            Invoke-Installer /x
+          }
+          if ((Test-Path $exe) -or $directory -in (Get-UserPathEntries)) {
+            throw 'Uninstall left the binary or PATH entry behind'
+          }
+          if (Compare-Object @($originalEntries) @(Get-UserPathEntries)) {
+            throw 'Install and uninstall changed unrelated PATH entries'
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: package-${{ matrix.platform }}-${{ matrix.arch }}
+          name: package-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
   publish:
     needs: [prepare, build]
+    if: "!inputs.build_only"
     runs-on: ubuntu-24.04
     permissions:
       contents: write

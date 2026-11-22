@@ -3,6 +3,7 @@ name = "caffeinate"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.91"
+license = "MIT OR Apache-2.0"
 description = "Keep your computer awake from the command line."
 repository = "https://github.com/Rajaniraiyn/caffinate"
 
@@ -18,8 +19,11 @@ wait-timeout = "0.2"
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["alloc", "CFString"] }
 objc2-io-kit = { version = "0.3", default-features = false, features = ["pwr_mgt"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 dbus = { version = "0.9", default-features = false, features = ["stdfd"] }
+
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+dbus = { version = "0.9", default-features = false, features = ["stdfd", "vendored"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", default-features = false, features = [
