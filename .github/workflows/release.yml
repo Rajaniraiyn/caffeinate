@@ -118,7 +118,7 @@ jobs:
                 cat "$dbus/COPYING"
               done > "$release/LICENSE-dbus.txt"
             '
-          if readelf -l "target/$TARGET/release/caffeinate" | grep -q INTERP; then
+          if readelf -l -d "target/$TARGET/release/caffeinate" | grep -E 'INTERP|NEEDED'; then
             echo 'Expected a static musl binary' >&2
             exit 1
           fi
@@ -145,14 +145,24 @@ jobs:
         if: matrix.musl
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends rpm cpio
+          sudo apt-get install -y --no-install-recommends rpm
           binary="$PWD/target/$TARGET/release/caffeinate"
           bash .github/packaging/linux.sh "$binary" "${TAG#v}" "$(dirname "$binary")/LICENSE-dbus.txt" "$PWD/dist"
-          dpkg-deb --extract dist/*.deb "$RUNNER_TEMP/deb"
-          mkdir "$RUNNER_TEMP/rpm"
-          rpm2cpio dist/*.rpm | (cd "$RUNNER_TEMP/rpm" && cpio -id)
-          cmp "$binary" "$RUNNER_TEMP/deb/usr/bin/caffeinate"
-          cmp "$binary" "$RUNNER_TEMP/rpm/usr/bin/caffeinate"
+
+          deb="$RUNNER_TEMP/deb"
+          rpm="$RUNNER_TEMP/rpm"
+          mkdir -p "$deb/var/lib/dpkg" "$rpm"
+          sudo dpkg --root="$deb" --install dist/*.deb
+          sudo rpm --root "$rpm" --initdb
+          sudo rpm --root "$rpm" --install dist/*.rpm
+          for root in "$deb" "$rpm"; do
+            cmp "$binary" "$root/usr/bin/caffeinate"
+            "$root/usr/bin/caffeinate" --help
+          done
+          sudo dpkg --root="$deb" --remove caffeinate
+          sudo rpm --root "$rpm" --erase caffeinate
+          test ! -e "$deb/usr/bin/caffeinate"
+          test ! -e "$rpm/usr/bin/caffeinate"
       - name: Build Windows Installer package
         if: runner.os == 'Windows'
         shell: pwsh
