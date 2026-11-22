@@ -39,7 +39,7 @@ jobs:
           $tag = ./.github/scripts/release-version.ps1 -Tag $env:RELEASE_TAG
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
-      - name: Build Windows binaries
+      - name: Build binaries
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           rustup toolchain install stable --profile minimal

@@ -7,18 +7,18 @@ Keep your PC awake from the command line.
 Run it once with mise. Ctrl+C ends the request.
 
 ```powershell
-mise x github:Rajaniraiyn/caffinate@latest -- caffeinate -disu
+mise x github:Rajaniraiyn/caffinate@0.1.1 -- caffeinate -disu
 ```
 
-Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate@latest`.
-Use `mise install github:Rajaniraiyn/caffinate@latest` to download the release
+Add it to your global mise config with `mise use -g github:Rajaniraiyn/caffinate@0.1.1`.
+Use `mise install github:Rajaniraiyn/caffinate@0.1.1` to download the release
 without changing that config.
 
 Cargo builds from the tagged source and needs Rust 1.91 or newer and the MSVC
 build tools.
 
 ```powershell
-cargo install --locked --git https://github.com/Rajaniraiyn/caffinate --tag v0.1.0
+cargo install --locked --git https://github.com/Rajaniraiyn/caffinate --tag v0.1.1
 ```
 
 ## Use
@@ -39,8 +39,9 @@ effect. [Power request behavior](https://learn.microsoft.com/en-us/windows/win32
 
 ## Release
 
-Push a `vMAJOR.MINOR.PATCH` tag that matches `Cargo.toml`. The Release workflow
-publishes x64 and Arm64 ZIPs and their SHA-256 checksums.
+For a manual release, set the version in `Cargo.toml`, run
+`cargo update --workspace`, and commit both Cargo files. Push the matching
+`vMAJOR.MINOR.PATCH` tag to publish x64 and Arm64 ZIPs and their checksums.
 
 To pick the version automatically, run the Release workflow from the default
 branch with the tag field empty. It uses the manifest version for the first

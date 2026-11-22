@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroU32;
 use std::time::Duration;
-use usage_rs::embedded::{self, Outcome};
-use usage_rs::{Args, Cli, Event, Parser};
+use usage_rs::embedded::{Exit, Outcome};
+use usage_rs::{Args, Cli, Error, Event, Parser};
 
 /// Prevent idle sleep while a command runs or until a timeout.
 #[derive(Cli, Debug)]
@@ -11,13 +11,13 @@ use usage_rs::{Args, Cli, Event, Parser};
     bin = "caffeinate",
     unknown_flags = "error",
     disable_help_subcommand,
-    after_help = "Slash switches are case-insensitive. Use /? for help."
+    after_help = "Slash switches are case-insensitive."
 )]
 struct Invocation {
     #[usage(flatten)]
     options: Options,
 
-    /// Command to run with the power requests active.
+    /// Command to run while the request is active.
     #[usage(double_dash = "automatic", value_name = "COMMAND")]
     _command: Option<OsString>,
 
@@ -28,15 +28,15 @@ struct Invocation {
 
 #[derive(Args, Debug)]
 pub struct Options {
-    /// Keep the display on and prevent idle system sleep.
+    /// Keep the display on and prevent idle sleep.
     #[usage(short, long)]
     pub display: bool,
 
-    /// Prevent idle system sleep. This is the default when no power switch is supplied.
+    /// Prevent idle sleep. This is the default.
     #[usage(short, long)]
     pub idle: bool,
 
-    /// Prevent idle system sleep while connected to AC power.
+    /// Prevent idle sleep on AC power.
     #[usage(short, long)]
     pub system: bool,
 
@@ -44,7 +44,7 @@ pub struct Options {
     #[usage(short, long)]
     pub user_active: bool,
 
-    /// Release the requests after this many seconds. Zero means no timeout.
+    /// Release the request after this many seconds. Zero means no timeout.
     #[usage(short = 't', long, value_name = "SECONDS")]
     timeout: Option<u64>,
 
@@ -52,7 +52,7 @@ pub struct Options {
     #[usage(short, long, value_name = "PID")]
     pub wait: Option<NonZeroU32>,
 
-    /// Report that disk idle requests are unavailable.
+    /// Disk idle requests are unavailable.
     #[usage(short = 'm', long)]
     pub disk: bool,
 }
@@ -70,7 +70,7 @@ impl Options {
 }
 
 pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
-    let normalized: Vec<_> = args.iter().map(|arg| windows_switch(arg)).collect();
+    let normalized: Vec<_> = args.iter().map(|arg| slash_switch(arg)).collect();
     let words: Vec<_> = normalized.iter().map(Cow::as_ref).collect();
     let mut parser = Parser::new(Invocation::command(), &words);
     let mut count = 0;
@@ -83,21 +83,31 @@ pub fn parse(args: &[OsString]) -> Outcome<(Options, &[OsString])> {
     let options = &words[..command_start];
     match Invocation::parse_from(options) {
         Ok(invocation) => Outcome::Parsed((invocation.options, &args[command_start..])),
-        Err(error) => embedded::outcome(Invocation::spec(), Invocation::command(), options, |_| {
-            Err(error)
+        Err(Error::Help { cmd, long }) => Outcome::Exit(Exit {
+            text: Invocation::render_help(cmd, long).unwrap_or_default(),
+            stderr: false,
+            code: 0,
+        }),
+        Err(error) => Outcome::Exit(Exit {
+            text: Invocation::render_failure(options, &error),
+            stderr: true,
+            code: 2,
         }),
     }
 }
 
-fn windows_switch(arg: &OsStr) -> Cow<'_, OsStr> {
+fn slash_switch(arg: &OsStr) -> Cow<'_, OsStr> {
     if !arg.as_encoded_bytes().starts_with(b"/") {
         return Cow::Borrowed(arg);
     }
     match arg.to_str().and_then(|text| text.strip_prefix('/')) {
         Some("?" | "h" | "H") => Cow::Borrowed(OsStr::new("--help")),
         Some(name) if !name.is_empty() => {
-            let prefix = if name.len() == 1 { "-" } else { "--" };
-            Cow::Owned(format!("{prefix}{}", name.to_ascii_lowercase()).into())
+            let mut switch = String::with_capacity(name.len() + 2);
+            switch.push_str(if name.len() == 1 { "-" } else { "--" });
+            switch.push_str(name);
+            switch.make_ascii_lowercase();
+            Cow::Owned(switch.into())
         }
         _ => Cow::Borrowed(arg),
     }
@@ -109,7 +119,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt;
 
     #[test]
-    fn accepts_windows_switches_and_short_bundles() {
+    fn accepts_slash_switches_and_short_bundles() {
         let args = ["-disu", "/WAIT", "32", "-t2", "--timeout=16", "/m"].map(OsString::from);
         let (options, command) = parse(&args).parsed().unwrap();
         assert!(

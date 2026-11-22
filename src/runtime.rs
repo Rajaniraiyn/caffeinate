@@ -55,14 +55,10 @@ fn execute(options: &Options, command: &[OsString]) -> Result<i32, String> {
                 }));
             }
         };
-        if options.timeout().is_some() || options.system || options.user_active {
-            if let Err(error) = session.wait(options, Some(child.as_handle())) {
-                eprintln!("caffeinate: {error}");
-            }
-        } else {
-            let status = child.wait();
-            drop(session);
-            return command_status(status);
+        if (options.timeout().is_some() || options.system || options.user_active)
+            && let Err(error) = session.wait(options, Some(child.as_handle()))
+        {
+            eprintln!("caffeinate: {error}");
         }
         return command_status(child.wait());
     }
