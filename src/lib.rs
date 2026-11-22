@@ -9,10 +9,15 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-compile_error!("caffeinate supports Windows, macOS, and Linux");
+#[cfg(not(any(
+    windows,
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "freebsd"
+)))]
+compile_error!("caffeinate supports Windows, macOS, Linux, and FreeBSD");
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
 #[path = "unix/mod.rs"]
 mod platform;
 #[cfg(windows)]
@@ -114,22 +119,32 @@ impl Inhibitor {
     /// Wait until the child exits or the request times out.
     ///
     /// The caller can retrieve the child's exit status with `child.wait()`.
-    /// A timeout releases the requests and lets the child continue.
+    /// A timeout releases the requests and lets the child continue. Any pipe
+    /// still attached as `child.stdin` stays open.
     pub fn wait_for_child(self, child: &mut Child) -> io::Result<()> {
         #[cfg(windows)]
         return self.hold(Target::Child(child));
 
         #[cfg(unix)]
         {
-            if self.request.timeout().is_none() && !self.request.user_active {
+            if self.request.timeout().is_none()
+                && !self.request.user_active
+                && child.stdin.is_none()
+            {
                 return child.wait().map(|_| ());
             }
-            if child.try_wait()?.is_none()
-                && let Some(process) = Process::open(child.id())?
-            {
-                return self.hold(Target::Process(&process));
+            if child.try_wait()?.is_some() {
+                return Ok(());
             }
-            Ok(())
+            match Process::open(child.id()) {
+                Ok(Some(process)) => self.hold(Target::Process(&process)),
+                Ok(None) => Ok(()),
+                #[cfg(target_os = "linux")]
+                Err(error) if platform::pidfd_unavailable(&error) => {
+                    self.hold(Target::Child(child))
+                }
+                Err(error) => Err(error),
+            }
         }
     }
 
@@ -154,9 +169,7 @@ impl Inhibitor {
                 &self.power,
                 &mut target,
                 remaining.into_iter().chain(active).min(),
-            )
-            .map_err(io::Error::other)?
-            {
+            )? {
                 return Ok(());
             }
         }
@@ -166,6 +179,6 @@ impl Inhibitor {
 pub(crate) enum Target<'a> {
     Idle,
     Process(&'a Process),
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     Child(&'a mut Child),
 }

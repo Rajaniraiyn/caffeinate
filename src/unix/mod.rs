@@ -1,11 +1,18 @@
-#[cfg_attr(target_os = "linux", path = "linux.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
-mod backend;
+#[cfg_attr(any(target_os = "linux", target_os = "freebsd"), path = "dbus.rs")]
+mod power;
+#[cfg_attr(target_os = "linux", path = "pidfd.rs")]
+#[cfg_attr(any(target_os = "macos", target_os = "freebsd"), path = "kqueue.rs")]
+mod process;
 
 use crate::{Request, Target};
-pub(crate) use backend::{Power, Process};
+pub(crate) use power::Power;
+pub(crate) use process::Process;
+#[cfg(target_os = "linux")]
+pub(crate) use process::pidfd_unavailable;
+use rustix::event::{Timespec, poll};
 use rustix::process::Pid;
-use std::{io, thread, time::Duration};
+use std::{io, time::Duration};
 
 fn checked_pid(pid: u32) -> io::Result<Pid> {
     i32::try_from(pid)
@@ -25,21 +32,25 @@ pub(crate) fn wait(
     _: &Power,
     target: &mut Target<'_>,
     duration: Option<Duration>,
-) -> Result<bool, String> {
+) -> io::Result<bool> {
     let duration = duration.map(|value| value.min(Duration::from_secs(86_400)));
     let result = match target {
         Target::Process(process) => process.wait(duration),
         Target::Idle => {
-            match duration {
-                Some(duration) => thread::sleep(duration),
-                None => thread::park(),
-            }
-            return Ok(false);
+            let timeout = duration
+                .map(Timespec::try_from)
+                .transpose()
+                .map_err(io::Error::other)?;
+            poll(&mut [], timeout.as_ref())
+                .map(|_| false)
+                .map_err(Into::into)
         }
+        #[cfg(target_os = "linux")]
+        Target::Child(child) => process::wait_for_legacy_child(child, duration),
     };
     match result {
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(false),
-        result => result.map_err(|error| format!("waiting for the process: {error}")),
+        result => result,
     }
 }
 

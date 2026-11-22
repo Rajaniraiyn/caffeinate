@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::io;
 use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
@@ -22,12 +21,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::DEVICE_NOTIFY_CALLBACK;
 // A delayed callback looks up its event without dereferencing its context.
 static SUBSCRIPTIONS: Mutex<Subscriptions> = Mutex::new(Subscriptions {
     next: 1,
-    events: BTreeMap::new(),
+    events: Vec::new(),
 });
 
 struct Subscriptions {
     next: usize,
-    events: BTreeMap<usize, Arc<OwnedHandle>>,
+    events: Vec<(usize, Arc<OwnedHandle>)>,
 }
 
 fn subscriptions() -> MutexGuard<'static, Subscriptions> {
@@ -52,7 +51,7 @@ impl PowerSource {
             subscriptions.next = id
                 .checked_add(1)
                 .ok_or("Power notification IDs exhausted.")?;
-            subscriptions.events.insert(id, Arc::clone(&event));
+            subscriptions.events.push((id, Arc::clone(&event)));
             id
         };
         let mut parameters = Box::new(DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
@@ -70,7 +69,7 @@ impl PowerSource {
             )
         };
         if status != ERROR_SUCCESS {
-            subscriptions().events.remove(&id);
+            remove_subscription(id);
             let error = io::Error::from_raw_os_error(status as i32);
             return Err(format!(
                 "Registering for power-source changes failed. {error}"
@@ -101,7 +100,7 @@ impl Drop for PowerSource {
     fn drop(&mut self) {
         let status = unsafe { PowerSettingUnregisterNotification(self.registration) };
         if let Some(parameters) = self.parameters.take() {
-            subscriptions().events.remove(&parameters.Context.addr());
+            remove_subscription(parameters.Context.addr());
             if status != ERROR_SUCCESS {
                 // Windows may still own the registration's pointer on failure.
                 let _ = Box::leak(parameters);
@@ -110,8 +109,16 @@ impl Drop for PowerSource {
     }
 }
 
+fn remove_subscription(id: usize) {
+    let mut subscriptions = subscriptions();
+    if let Some(index) = subscriptions.events.iter().position(|(key, _)| *key == id) {
+        subscriptions.events.swap_remove(index);
+    }
+}
+
 unsafe extern "system" fn power_changed(context: *const c_void, _: u32, _: *const c_void) -> u32 {
-    if let Some(event) = subscriptions().events.get(&context.addr()) {
+    let id = context.addr();
+    if let Some((_, event)) = subscriptions().events.iter().find(|(key, _)| *key == id) {
         unsafe { SetEvent(event.as_raw_handle()) };
     }
     ERROR_SUCCESS

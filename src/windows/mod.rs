@@ -75,7 +75,7 @@ pub(crate) fn wait(
     power: &Power,
     target: &mut Target<'_>,
     duration: Option<Duration>,
-) -> Result<bool, String> {
+) -> io::Result<bool> {
     let process = match target {
         Target::Idle => None,
         Target::Process(process) => Some(process.0.as_raw_handle()),
@@ -106,8 +106,8 @@ pub(crate) fn wait(
     match result {
         WAIT_OBJECT_0 => Ok(process.is_some()),
         WAIT_TIMEOUT => Ok(false),
-        WAIT_FAILED => Err(format!("Waiting failed. {}", io::Error::last_os_error())),
+        WAIT_FAILED => Err(io::Error::last_os_error()),
         event if event == WAIT_OBJECT_0 + 1 && changed.is_some() => Ok(false),
-        event => Err(format!("Unexpected wait result {event}.")),
+        event => Err(io::Error::other(format!("Unexpected wait result {event}."))),
     }
 }
